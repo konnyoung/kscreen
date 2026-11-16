@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'self'">
+<title>kScreen</title>
+<link rel="stylesheet" href="brand.css">
+<style>
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: #0b0c0e;
+    color: #f2f2f5;
+    font: 14px/1.5 'Inter', 'Segoe UI', system-ui, sans-serif;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    box-sizing: border-box;
+    text-align: center;
+  }
+  h1 { font-size: 18px; font-weight: 600; margin: 0 0 8px; }
+  p { color: #9a9ba5; margin: 0 auto 24px; max-width: 420px; }
+  code { color: #5e606b; font-size: 12px; display: block; margin-top: 8px; word-break: break-all; }
+  button {
+    height: 44px; padding: 0 28px;
+    border: 0; border-radius: 8px;
+    background: #f53f5f; color: #fff;
+    font: inherit; font-weight: 600;
+    cursor: pointer;
+  }
+  button:hover { background: #ff5573; }
+  .countdown { color: #5e606b; font-size: 12px; margin-top: 14px; }
+</style>
+</head>
+<body>
+  <div>
+    <h2 class="brand-logo"><span class="k">k</span><span class="screen">Screen</span></h2>
+    <h1>Não foi possível conectar</h1>
+    <p>Confira sua internet. O kScreen tenta de novo sozinho.<code id="detail"></code></p>
+    <button id="retry">Tentar agora</button>
+    <div class="countdown" id="countdown"></div>
+  </div>
+  <script src="i18n.js"></script>
+  <script src="offline.js"></script>
+</body>
+</html>

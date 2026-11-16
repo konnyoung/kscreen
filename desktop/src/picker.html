@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'self'">
+<title>Compartilhar tela</title>
+<link rel="stylesheet" href="brand.css">
+<style>
+  /* kScreen palette (same as the site) */
+  :root {
+    --bg: #121316;
+    --panel: #0b0c0e;
+    --card: #18191d;
+    --hover: #222329;
+    --border: #26272e;
+    --text: #f2f2f5;
+    --text-2: #9a9ba5;
+    --muted: #5e606b;
+    --accent: #f53f5f;
+    --accent-hover: #ff5573;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.4 'Inter', 'Segoe UI', system-ui, sans-serif;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    user-select: none;
+    overflow: hidden;
+  }
+  button { font: inherit; }
+
+  /* Top: draggable bar with the segmented tabs */
+  header {
+    -webkit-app-region: drag;
+    padding: 16px 16px 12px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .tabs {
+    -webkit-app-region: no-drag;
+    flex: 1;
+    display: flex;
+    gap: 4px;
+    padding: 4px;
+    background: var(--panel);
+    border-radius: 8px;
+  }
+  .tab {
+    flex: 1;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-2);
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .tab:hover { color: var(--text); background: rgba(255,255,255,.04); }
+  .tab[aria-selected="true"] { background: var(--hover); color: var(--text); font-weight: 600; }
+  .tab .count { color: var(--muted); font-weight: 500; font-size: 12px; }
+  .close {
+    -webkit-app-region: no-drag;
+    width: 36px; height: 36px;
+    display: grid; place-items: center;
+    border: 0; border-radius: 6px;
+    background: transparent; color: var(--text-2);
+    cursor: pointer;
+  }
+  .close:hover { background: var(--hover); color: var(--text); }
+
+  /* Sources */
+  main { flex: 1; overflow-y: auto; padding: 4px 16px 16px; }
+  main::-webkit-scrollbar { width: 12px; }
+  main::-webkit-scrollbar-thumb { background: transparent; border-radius: 12px; border: 3px solid var(--bg); }
+  main:hover::-webkit-scrollbar-thumb { background: var(--border); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+  .source {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 0 0 4px;
+    border: 0;
+    background: none;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+    min-width: 0;
+  }
+  .thumb {
+    position: relative;
+    aspect-ratio: 16 / 9;
+    border-radius: 8px;
+    background: #000 center / contain no-repeat;
+    outline: 2px solid transparent;
+    outline-offset: 0;
+    transition: outline-color .1s;
+  }
+  .thumb.empty { display: grid; place-items: center; color: var(--muted); font-size: 12px; }
+  .source:hover .thumb { outline-color: #3a3b44; }
+  .source[aria-pressed="true"] .thumb { outline: 3px solid var(--accent); }
+  .source:focus-visible { outline: none; }
+  .source:focus-visible .thumb { outline-color: var(--text-2); }
+  .label { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 0 2px; }
+  .label img { width: 20px; height: 20px; flex: none; border-radius: 4px; }
+  .label .ph { width: 20px; height: 20px; flex: none; border-radius: 4px; background: var(--hover); }
+  .label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+  .label small { color: var(--muted); margin-left: auto; flex: none; }
+  .empty-msg { color: var(--text-2); text-align: center; padding: 64px 0; }
+  /* Wayland: the system picks the screen/window; only the logo and settings are ours */
+  body.system-picker .tabs, body.system-picker #grid { display: none; }
+  .system-panel { display: none; height: 100%; place-items: center; text-align: center; color: var(--text-2); }
+  body.system-picker .system-panel { display: grid; }
+  .system-panel .brand-logo { font-size: 44px; margin-bottom: 12px; }
+
+  /* Bottom bar: current mode + settings + go live */
+  footer {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 16px;
+    background: var(--panel);
+  }
+  .mode-summary { flex: 1; min-width: 0; }
+  .mode-summary strong { display: block; font-size: 16px; }
+  .mode-summary span { color: var(--muted); font-size: 13px; }
+  .mode-summary span i { font-style: normal; }
+  .mode-summary span i + i::before { content: '·'; margin: 0 6px; }
+  .icon-btn {
+    width: 40px; height: 40px;
+    display: grid; place-items: center;
+    border: 0; border-radius: 8px;
+    background: var(--hover); color: var(--text);
+    cursor: pointer;
+  }
+  .icon-btn:hover, .icon-btn[aria-expanded="true"] { background: #2c2d35; }
+  .btn {
+    height: 40px; padding: 0 20px;
+    border: 0; border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .btn-ghost { background: transparent; color: var(--text); }
+  .btn-ghost:hover { text-decoration: underline; }
+  .btn-live { background: var(--accent); color: #fff; display: inline-flex; align-items: center; gap: 8px; }
+  .btn-live:hover { background: var(--accent-hover); }
+  .btn-live:disabled { background: var(--hover); color: var(--muted); cursor: default; }
+
+  /* Settings menus (Discord-like) */
+  .menu {
+    position: absolute;
+    bottom: calc(100% - 6px);
+    right: 16px;
+    width: 260px;
+    padding: 6px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    z-index: 5;
+  }
+  .menu[hidden] { display: none; }
+  .submenu { right: calc(16px + 266px); width: 190px; }
+  .submenu.apps { width: 240px; max-height: 380px; overflow-y: auto; }
+  .apps-empty { padding: 6px 8px 8px; color: var(--muted); font-size: 13px; }
+  .item .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .menu-title { padding: 8px 8px 6px; color: var(--muted); font-size: 12px; font-weight: 600; }
+  .item {
+    width: 100%;
+    min-height: 34px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 8px;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text);
+    text-align: left;
+    cursor: pointer;
+  }
+  .item:hover, .item:focus-visible, .item[aria-expanded="true"] { background: rgba(255,255,255,.06); color: #fff; outline: none; }
+  .item .grow { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .item .grow small { color: var(--muted); font-size: 12px; }
+  .item.disabled { opacity: .45; cursor: default; }
+  .item[hidden] { display: none; }
+  .sep { height: 1px; background: var(--border); margin: 6px 4px; }
+  .radio, .check { position: relative; width: 20px; height: 20px; flex: none; }
+  /* On/off settings are switches (same as the site's voice menu); lists keep checkboxes */
+  .switch { position: relative; flex: none; width: 36px; height: 20px; border-radius: 999px; background: #4e5058; transition: background-color .2s ease; }
+  .switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .2s ease; }
+  .on .switch { background: var(--accent); }
+  .on .switch::after { transform: translateX(16px); }
+  .radio::before { content: ''; position: absolute; inset: 0; border-radius: 50%; border: 2px solid var(--text-2); }
+  .on .radio::before, .radio.on::before { border-color: var(--accent); background: var(--accent); }
+  .on .radio::after { content: ''; position: absolute; inset: 6px; border-radius: 50%; background: #fff; }
+  .check::before { content: ''; position: absolute; inset: 0; border-radius: 4px; border: 2px solid var(--text-2); }
+  .on .check::before { background: var(--accent); border-color: var(--accent); }
+  .on .check::after {
+    content: ''; position: absolute; left: 7px; top: 3px; width: 5px; height: 10px;
+    border: solid #fff; border-width: 0 2.5px 2.5px 0; transform: rotate(45deg);
+  }
+  .chev { flex: none; opacity: .8; }
+</style>
+</head>
+<body>
+  <header>
+    <div class="tabs" role="tablist">
+      <button class="tab" role="tab" data-tab="window" aria-selected="true">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm0 4v10h16V8H4Z"/></svg>
+        Aplicativos <span class="count" id="count-window"></span>
+      </button>
+      <button class="tab" role="tab" data-tab="screen" aria-selected="false">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4 3h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-6v2h3v2H7v-2h3v-2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/></svg>
+        Tela Inteira <span class="count" id="count-screen"></span>
+      </button>
+    </div>
+    <button class="close" id="close" title="Cancelar (Esc)" aria-label="Cancelar">
+      <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9"/></svg>
+    </button>
+  </header>
+
+  <main>
+    <div class="grid" id="grid"></div>
+    <div class="system-panel"><div><h2 class="brand-logo"><span class="k">k</span><span class="screen">Screen</span></h2>A tela ou janela é escolhida na janela do sistema.</div></div>
+  </main>
+
+  <footer>
+    <div class="mode-summary">
+      <strong id="mode-name">Jogos</strong>
+      <span id="mode-detail"></span>
+    </div>
+    <button class="icon-btn" id="settings" title="Qualidade da transmissão" aria-haspopup="menu" aria-expanded="false">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19.4 13a7.5 7.5 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.6 7.6 0 0 0-1.7-1L15 3.3h-4l-.4 2.6a7.6 7.6 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.5 7.5 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1c.5.4 1.1.7 1.7 1l.4 2.6h4l.4-2.6c.6-.3 1.2-.6 1.7-1l2.5 1 2-3.5L19.4 13ZM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Z" transform="translate(-1 0)"/></svg>
+    </button>
+    <button class="btn btn-ghost" id="cancel">Cancelar</button>
+    <button class="btn btn-live" id="share" disabled>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4 3h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-6v2h3v2H7v-2h3v-2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/></svg>
+      Ao vivo
+    </button>
+
+    <div class="menu" id="menu" hidden role="menu">
+      <div class="menu-title">Modo de transmissão</div>
+      <button class="item" data-preset="games" role="menuitemradio"><span class="grow">Jogos<small>1080p · 60fps</small></span><span class="radio"></span></button>
+      <button class="item" data-preset="max" role="menuitemradio"><span class="grow">Qualidade máxima<small>Fonte · 60fps</small></span><span class="radio"></span></button>
+      <button class="item" data-preset="custom" role="menuitemradio"><span class="grow">Personalizada</span><span class="radio"></span></button>
+      <div class="sep"></div>
+      <button class="item" id="open-res" aria-haspopup="menu" aria-expanded="false"><span class="grow">Resolução da tela</span><svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg></button>
+      <button class="item" id="open-fps" aria-haspopup="menu" aria-expanded="false"><span class="grow">Taxa de quadros</span><svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg></button>
+      <div class="sep"></div>
+      <button class="item" id="audio-item" role="menuitemcheckbox" aria-checked="false"><span class="grow">Compartilhar o som do PC</span><span class="switch" aria-hidden="true"></span></button>
+      <button class="item" id="open-aq" aria-haspopup="menu" aria-expanded="false"><span class="grow">Qualidade do áudio</span><svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg></button>
+      <button class="item" id="open-apps" aria-haspopup="menu" aria-expanded="false"><span class="grow">Excluir áudio de apps</span><svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg></button>
+    </div>
+    <div class="menu submenu" id="menu-res" hidden role="menu"></div>
+    <div class="menu submenu" id="menu-fps" hidden role="menu"></div>
+    <div class="menu submenu" id="menu-aq" hidden role="menu"></div>
+    <div class="menu submenu apps" id="menu-apps" hidden role="menu"></div>
+  </footer>
+  <script src="i18n.js"></script>
+  <script src="picker.js"></script>
+</body>
+</html>

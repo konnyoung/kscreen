@@ -1,0 +1,59 @@
+/* Kennyy brand pieces shared by the app's own screens (same as the site / bot web player). */
+@font-face {
+  font-family: 'K2D';
+  src: url('fonts/K2D-Bold.ttf') format('truetype');
+  font-weight: 700;
+  font-display: block;
+}
+
+/* Logo: "kScreen" in K2D, like .home-logo on the site */
+.brand-logo {
+  font-family: 'K2D', sans-serif;
+  font-weight: 700;
+  font-size: 58px;
+  line-height: 1;
+  letter-spacing: -1.5px;
+  user-select: none;
+  margin: 0 0 28px;
+}
+.brand-logo .k { color: #F53F5F; }
+.brand-logo .screen { color: #FFFFFF; }
+
+/* iOS-style activity indicator from the Kennyy web player (.io-spinner):
+   12 tapered spokes fading in sequence; currentColor colors it, --sz sizes it. */
+.io-spinner {
+  --sz: 40px;
+  position: relative;
+  display: inline-block;
+  width: var(--sz);
+  height: var(--sz);
+  color: #F53F5F;
+}
+.io-spinner i {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: calc(var(--sz) * 0.09);
+  height: calc(var(--sz) * 0.27);
+  margin-left: calc(var(--sz) * -0.045);
+  border-radius: calc(var(--sz) * 0.09);
+  background: currentColor;
+  transform-origin: 50% calc(var(--sz) / 2);
+  animation: ios-fade 1s linear infinite;
+}
+.io-spinner i:nth-child(1)  { transform: rotate(0deg);   animation-delay: -0.9167s; }
+.io-spinner i:nth-child(2)  { transform: rotate(30deg);  animation-delay: -0.8333s; }
+.io-spinner i:nth-child(3)  { transform: rotate(60deg);  animation-delay: -0.75s; }
+.io-spinner i:nth-child(4)  { transform: rotate(90deg);  animation-delay: -0.6667s; }
+.io-spinner i:nth-child(5)  { transform: rotate(120deg); animation-delay: -0.5833s; }
+.io-spinner i:nth-child(6)  { transform: rotate(150deg); animation-delay: -0.5s; }
+.io-spinner i:nth-child(7)  { transform: rotate(180deg); animation-delay: -0.4167s; }
+.io-spinner i:nth-child(8)  { transform: rotate(210deg); animation-delay: -0.3333s; }
+.io-spinner i:nth-child(9)  { transform: rotate(240deg); animation-delay: -0.25s; }
+.io-spinner i:nth-child(10) { transform: rotate(270deg); animation-delay: -0.1667s; }
+.io-spinner i:nth-child(11) { transform: rotate(300deg); animation-delay: -0.0833s; }
+.io-spinner i:nth-child(12) { transform: rotate(330deg); animation-delay: 0s; }
+@keyframes ios-fade {
+  0%   { opacity: 1; }
+  100% { opacity: 0.12; }
+}

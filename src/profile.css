@@ -1,0 +1,80 @@
+/* Profile card (src/profile.js). Above the chat, menus and the settings window. */
+.kp-profile {
+  position: fixed;
+  z-index: 320;
+  width: 300px;
+  max-width: calc(100vw - 16px);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 12px);
+  background: var(--bg-card, #16171b);
+  color: var(--text-primary);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+  outline: none;
+  animation: kp-in 0.14s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.kp-profile.closing { opacity: 0; transform: translateY(-2px) scale(0.98); transition: opacity 0.12s ease, transform 0.12s ease; }
+@keyframes kp-in {
+  from { opacity: 0; transform: translateY(4px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+.kp-banner {
+  height: 84px;
+  background:
+    radial-gradient(120% 140% at 0% 0%, color-mix(in srgb, var(--profile-color) 85%, #fff 15%), transparent 60%),
+    linear-gradient(120deg, var(--profile-color), color-mix(in srgb, var(--profile-color) 35%, #000));
+}
+.kp-avatar {
+  display: block;
+  width: 84px;
+  height: 84px;
+  margin: -46px 0 0 14px;
+  border-radius: 50%;
+  border: 6px solid var(--bg-card, #16171b);
+  object-fit: cover;
+  background: var(--bg-card, #16171b);
+  position: relative;
+}
+.kp-body { padding: 8px 16px 16px; }
+.kp-name { font-size: 20px; font-weight: 800; line-height: 1.25; overflow-wrap: anywhere; }
+.kp-you { margin-left: 6px; font-size: 13px; font-weight: 600; color: var(--text-secondary); }
+.kp-user { margin-top: 2px; color: var(--text-secondary); font-size: 14px; overflow-wrap: anywhere; user-select: text; }
+.kp-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.kp-chip {
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-primary) 9%, transparent);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+}
+.kp-chip.is-discord { background: #5865F2; color: #FFFFFF; }
+.kp-chip.is-admin { background: var(--accent-dim); color: var(--accent); }
+.kp-section { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+.kp-section-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-secondary); }
+.kp-section-text { margin-top: 4px; font-size: 14px; }
+.kp-btn {
+  width: 100%;
+  margin-top: 14px;
+  height: 36px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius, 8px);
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+  color: var(--text-primary);
+  font: 600 14px var(--font-ui);
+  cursor: pointer;
+  transition: background var(--anim-duration, 0.15s) ease;
+}
+.kp-btn:hover { background: color-mix(in srgb, var(--text-primary) 12%, transparent); }
+
+/* What opens a profile: names on the cards, home dock, viewers */
+.card-nametag .nametag-text,
+.strip-nametag .nametag-text,
+#spotlight-nametag-text { pointer-events: auto; cursor: pointer; }
+.card-nametag .nametag-text:hover,
+.strip-nametag .nametag-text:hover,
+#spotlight-nametag-text:hover { text-decoration: underline; }
+body.controls-idle .card-nametag .nametag-text,
+body.controls-idle #spotlight-nametag-text { pointer-events: none; }
+.home-user-avatar, .home-user-name, .viewer-avatar, #header-avatar { cursor: pointer; }
+.home-user-name:hover { text-decoration: underline; }

@@ -1,0 +1,692 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0b0c0e" />
+    <meta name="description" content="Compartilhamento de tela P2P em salas, direto entre os navegadores." />
+    <title>Kennyy ScreenShare</title>
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    <!-- Kennyy Fonts: Inter for UI, K2D for brand titles -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=K2D:wght@400;600;700;800&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <!-- 1. TOP-LEFT HEADER (Google Meet / Kennyy Clean Header) -->
+      <header class="kennyy-topbar hidden" id="kennyy-topbar">
+        <div class="topbar-left">
+          <button class="room-code-btn" id="btn-copy-room-code" title="Convidar para a sala" aria-label="Convidar para a sala" aria-haspopup="menu" aria-expanded="false" aria-controls="room-code-menu">
+            <span class="room-lock-icon hidden" id="header-room-lock" title="Sala com senha"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path></svg></span>
+            <span id="header-room-code"></span>
+            <svg class="room-code-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          </button>
+          
+          <div class="discord-context-menu room-code-menu hidden" id="room-code-menu" role="menu" aria-label="Convidar para a sala">
+            <button type="button" class="ctx-item" id="room-menu-copy-code" role="menuitem">Copiar código da sala</button>
+            <button type="button" class="ctx-item" id="room-menu-copy-link" role="menuitem">Copiar link da sala</button>
+          </div>
+          <div class="topbar-separator" aria-hidden="true"></div>
+
+          <div class="active-stream-info" id="active-stream-info">
+            <img class="header-avatar hidden" id="header-avatar" src="/avatar.png" alt="" />
+            <span class="header-stream-title" id="header-stream-title"></span>
+          </div>
+        </div>
+
+        <div class="topbar-right">
+          <!-- Who is watching the focused stream (Discord: top right, next to the live badge) -->
+          <div class="header-viewers hidden" id="header-viewers"></div>
+          <span class="header-live hidden" id="header-live"><span class="header-live-quality" id="header-live-quality"></span><span class="header-live-tag">AO VIVO</span></span>
+          <!-- View Mode Toggle (Grid vs Spotlight) -->
+          <button class="topbar-icon-btn hidden" id="btn-toggle-view" title="Alternar entre grade e destaque" aria-label="Alternar entre grade e destaque">
+            <svg id="icon-view-grid" width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M4 4h6v6H4V4zm10 0h6v6h-6V4zM4 14h6v6H4v-6zm10 0h6v6h-6v-6z"/>
+            </svg>
+            <svg id="icon-view-spotlight" class="hidden" width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14z"/>
+              <path d="M7 12h10v5H7z"/>
+            </svg>
+            <span class="btn-text" id="view-mode-label">Grade</span>
+          </button>
+
+          <!-- Telemetry & STUN Details Modal Toggle -->
+          <button class="connection-status-pill hidden" id="btn-open-diagnostics" title="Detalhes da conexão P2P">
+            <span class="status-dot" id="top-status-dot"></span>
+            <span class="status-text" id="top-status-text">Desconectado</span>
+          </button>
+          <!-- Room chat (Discord: top right) -->
+          <button class="topbar-icon-btn chat-toggle-btn" id="btn-dock-chat" title="Chat da sala" aria-label="Chat da sala">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2.8c-5.3 0-9.6 3.9-9.6 8.6 0 2.4 1.1 4.6 2.9 6.2l-.9 3.4c-.1.5.4.9.8.6l3.6-2c1 .3 2.1.5 3.2.5 5.3 0 9.6-3.9 9.6-8.6S17.3 2.8 12 2.8z"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <!-- 2. MAIN STAGE (GRID MODE & SPOTLIGHT MODE) -->
+      <main class="kennyy-stage hidden" id="kennyy-stage">
+        <!-- MODE 1: GRID VIEW (Screenshot 1: 2x3 or dynamic grid of 16:9 cards) -->
+        <div class="stage-grid-view" id="stage-grid-view">
+          <!-- Dynamically populated with participant cards -->
+        </div>
+
+        <!-- MODE 2: SPOTLIGHT VIEW (Screenshot 2: Large focused video + bottom participant strip) -->
+        <div class="stage-spotlight-view hidden" id="stage-spotlight-view">
+          <!-- Focused Screen Video Card -->
+          <div class="spotlight-main-card" id="spotlight-main-card">
+            <video id="spotlight-video" autoplay playsinline muted></video>            
+            <!-- Fallback Avatar Card inside Spotlight when nobody is sharing -->
+            <div class="spotlight-avatar-fallback hidden" id="spotlight-avatar-fallback">
+              <img src="/avatar.png" class="spotlight-fallback-avatar" id="spotlight-fallback-avatar" alt="" />
+              <div class="spotlight-fallback-title" id="spotlight-fallback-title">Aguardando transmissão...</div>
+            </div>
+
+            <!-- Floating nametag on spotlight video -->
+            <div class="card-nametag" id="spotlight-nametag">
+              <span class="live-dot hidden" id="spotlight-live-dot"></span>
+              <span id="spotlight-nametag-text"></span>
+              <span class="voice-icons" id="spotlight-voice-icons"></span>
+              <span class="signal hidden" id="spotlight-signal" role="img"><i></i><i></i><i></i></span>
+            </div>
+
+          </div>
+
+          <!-- Bottom Participant Strip (Colorful cards with Kasane Teto avatar) -->
+          <div class="participants-strip" id="participants-strip">
+            <!-- Dynamically populated participant cards -->
+          </div>
+        </div>
+      </main>
+
+      <!-- Volume of the focused card (Discord: next to fullscreen); output volume otherwise -->
+      <div class="stage-volume hidden" id="stage-volume">
+        <div class="stage-volume-pop"><input type="range" min="0" max="200" step="1" id="stage-volume-slider" aria-label="Volume"></div>
+        <button type="button" class="stage-volume-btn" id="btn-stage-volume" title="Volume" aria-label="Volume">
+          <svg class="vol-on" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 8v8a4.5 4.5 0 0 0 2.5-4zM14 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6z"/></svg>
+          <svg class="vol-off" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.5 12A4.5 4.5 0 0 0 14 8v2.2l2.5 2.5V12zm2.5 0c0 .9-.2 1.8-.5 2.6l1.5 1.5A9 9 0 0 0 14 3.2v2.1a7 7 0 0 1 5 6.7zM4.3 3 3 4.3 7.7 9H3v6h4l5 5v-6.7l4.3 4.3c-.7.5-1.4.9-2.3 1.2v2.1a9 9 0 0 0 3.7-1.8l2 2 1.3-1.3L4.3 3zM12 4 9.9 6.1 12 8.2V4z"/></svg>
+        </button>
+      </div>
+
+      <!-- Zoom into the focused camera/screen: horizontal slider opens to the left on hover -->
+      <div class="stage-zoom hidden" id="stage-zoom">
+        <div class="stage-zoom-pop"><input type="range" min="100" max="600" step="1" value="100" id="stage-zoom-slider" aria-label="Zoom"></div>
+        <button type="button" class="stage-zoom-btn" id="btn-stage-zoom" title="Zoom" aria-label="Zoom">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5M10.5 7.5v6M7.5 10.5h6"/></svg>
+        </button>
+      </div>
+
+      <!-- Fullscreen for the whole call (Discord: bottom right, level with the dock) -->
+      <button type="button" class="stage-fs-btn hidden" id="btn-stage-fullscreen" title="Tela cheia" aria-label="Tela cheia">
+        <svg class="fs-enter" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
+        <svg class="fs-exit" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/></svg>
+      </button>
+
+      <!-- Settings (same window as the gear on the home screen): bottom left, level with the dock -->
+      <button type="button" class="stage-settings-btn hidden" id="btn-room-settings" title="Configurações (Ctrl+,)" aria-label="Configurações">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M10.56 1.1c-.46.05-.7.53-.64.98.18 1.16-.19 2.2-.98 2.53-.8.33-1.79-.15-2.49-1.1-.27-.36-.78-.52-1.14-.24-.77.59-1.45 1.27-2.04 2.04-.28.36-.12.87.24 1.14.96.7 1.43 1.7 1.1 2.49-.33.8-1.37 1.16-2.53.98-.45-.07-.93.18-.99.64a11.1 11.1 0 0 0 0 2.88c.06.46.54.7.99.64 1.16-.18 2.2.19 2.53.98.33.8-.14 1.79-1.1 2.49-.36.27-.52.78-.24 1.14.59.77 1.27 1.45 2.04 2.04.36.28.87.12 1.14-.24.7-.95 1.7-1.43 2.49-1.1.8.33 1.16 1.37.98 2.53-.07.45.18.93.64.99a11.1 11.1 0 0 0 2.88 0c.46-.06.7-.54.64-.99-.18-1.16.19-2.2.98-2.53.8-.33 1.79.14 2.49 1.1.27.36.78.52 1.14.24.77-.59 1.45-1.27 2.04-2.04.28-.36.12-.87-.24-1.14-.96-.7-1.43-1.7-1.1-2.49.33-.8 1.37-1.16 2.53-.98.45.07.93-.18.99-.64a11.1 11.1 0 0 0 0-2.88c-.06-.46-.54-.7-.99-.64-1.16.18-2.2-.19-2.53-.98-.33-.8.14-1.79 1.1-2.49.36-.27.52-.78.24-1.14a11.07 11.07 0 0 0-2.04-2.04c-.36-.28-.87-.12-1.14.24-.7.96-1.7 1.43-2.49 1.1-.8-.33-1.16-1.37-.98-2.53.07-.45-.18-.93-.64-.99a11.1 11.1 0 0 0-2.88 0zM16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0z" clip-rule="evenodd"/></svg>
+      </button>
+
+      <!-- 3. FLOATING BOTTOM DOCK (Centered Glass Pill Controls) -->
+      <footer class="kennyy-dock-wrapper hidden" id="kennyy-dock-wrapper">
+        <div class="kennyy-dock" role="toolbar" aria-label="Controles da chamada">
+          <div class="dock-group">
+            <div class="dock-split">
+              <button class="dock-btn" id="btn-dock-mic" title="Ativar microfone" aria-label="Microfone">
+            <svg class="dock-icon mic-on" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+            </svg>
+            <svg class="dock-icon mic-off hidden" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M19 11h-1.7c0 .74-.16 1.43-.43 2.05l1.23 1.23c.56-.98.9-2.09.9-3.28zm-4.02.17c0-.06.02-.11.02-.17V5c0-1.66-1.34-3-3-3S9 3.34 9 5v.18l5.98 5.99zM4.27 3 3 4.27l6.01 6.01V11c0 1.66 1.33 3 2.99 3 .22 0 .44-.03.65-.08l1.66 1.66c-.71.33-1.5.52-2.31.52-2.76 0-5.3-2.1-5.3-5.1H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c.91-.13 1.77-.45 2.54-.9L19.73 21 21 19.73 4.27 3z"/>
+            </svg>
+          </button>
+              <button class="dock-btn dock-chevron" id="btn-mic-menu" title="Opções de voz" aria-label="Opções de voz" aria-haspopup="menu" aria-expanded="false"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg></button>
+            </div>
+            <div class="dock-split">
+            <button class="dock-btn" id="btn-dock-audio" title="Silenciar áudio da sala" aria-label="Áudio da sala" aria-pressed="false">
+            <svg class="dock-icon audio-on" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 3a9 9 0 0 0-9 9v7c0 1.1.9 2 2 2h4v-8H5v-1a7 7 0 0 1 14 0v1h-4v8h4c1.1 0 2-.9 2-2v-7a9 9 0 0 0-9-9z"/>
+            </svg>
+            <svg class="dock-icon audio-off hidden" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 4a8 8 0 0 0-8 8v7a1 1 0 0 0 1 1h3v-6H6v-2a6 6 0 0 1 12 0v2h-2v6h3a1 1 0 0 0 1-1v-7a8 8 0 0 0-8-8zm-8.7 17.3 18.4-18.4 1.4 1.4-18.4 18.4z"/>
+            </svg>
+          </button>
+              <button class="dock-btn dock-chevron" id="btn-audio-menu" title="Opções de saída" aria-label="Opções de saída" aria-haspopup="menu" aria-expanded="false"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg></button>
+            </div>
+          </div>
+          <div class="dock-group">
+            <div class="dock-split">
+              <button class="dock-btn muted" id="btn-dock-camera" title="Ligar câmera" aria-label="Câmera" aria-pressed="false">
+            <svg class="dock-icon cam-on hidden" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>
+            </svg>
+            <svg class="dock-icon cam-off" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M21 6.5l-4 4V7c0-.55-.45-1-1-1H9.82L21 17.18V6.5zM3.27 2 2 3.27 4.73 6H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.21 0 .39-.08.54-.18L19.73 21 21 19.73 3.27 2z"/>
+            </svg>
+          </button>
+              <button class="dock-btn dock-chevron" id="btn-cam-menu" title="Opções de vídeo" aria-label="Opções de vídeo" aria-haspopup="menu" aria-expanded="false"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg></button>
+            </div>
+            <div class="dock-split">
+              <button class="dock-btn" id="btn-dock-screenshare" title="Compartilhar tela" aria-label="Compartilhar tela" aria-pressed="false">
+            <svg class="dock-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+              <line x1="8" y1="21" x2="16" y2="21"></line>
+              <line x1="12" y1="17" x2="12" y2="21"></line>
+            </svg>
+          </button>
+              <button class="dock-btn dock-chevron hidden" id="btn-dock-share-menu" title="Opções da transmissão" aria-label="Opções da transmissão" aria-haspopup="menu" aria-expanded="false" aria-controls="share-menu">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          </button>
+            </div>
+          </div>
+          <button class="dock-btn danger" id="btn-dock-endcall" title="Sair da sala" aria-label="Sair da sala">
+            <svg class="endcall-watch" width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M21 3H3a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h7v2H8v2h8v-2h-2v-2h7a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm-5.3 10.3-1.4 1.4L12 12.4l-2.3 2.3-1.4-1.4 2.3-2.3-2.3-2.3 1.4-1.4L12 9.6l2.3-2.3 1.4 1.4-2.3 2.3 2.3 2.3z"/>
+            </svg>
+            <svg class="endcall-leave" width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08c-.18-.17-.29-.42-.29-.7 0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28-.79-.74-1.69-1.36-2.67-1.85-.33-.16-.56-.5-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z"/>
+            </svg>
+          </button>
+        </div>
+
+        <!-- Voice / video device menus (chevrons next to mic and camera) -->
+        <div class="device-menu hidden" id="device-menu" role="menu">
+          <div class="device-main" id="device-main"></div>
+          <div class="device-sub hidden" id="device-sub" role="menu"></div>
+        </div>
+
+        <!-- Live menu (Discord-style): opens from the screen share button while live -->
+        <div class="device-menu share-menu hidden" id="share-menu" role="menu" aria-label="Transmissão">
+          <div class="device-main" id="share-main">
+            <button class="share-menu-item danger" id="share-menu-stop" role="menuitem">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4M9 7l6 6M15 7l-6 6"/></svg>
+              <span>Parar de transmitir</span>
+            </button>
+            <button class="share-menu-item" id="share-menu-switch" role="menuitem">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4M8 11a4 4 0 0 1 7-2.6M16 7v2h-2"/></svg>
+              <span>Alterar a transmissão</span>
+            </button>
+            <div class="device-separator"></div>
+            <button class="share-menu-item" id="share-menu-quality" role="menuitem" aria-haspopup="true" aria-expanded="false">
+              <span>Qualidade da transmissão</span>
+              <svg class="share-menu-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>
+            </button>
+            <label class="share-menu-item share-menu-check" id="share-menu-audio-row">
+              <span>Compartilhar áudio da transmissão</span>
+              <input type="checkbox" id="share-menu-audio" role="switch">
+              <span class="k-switch" aria-hidden="true"></span>
+            </label>
+            <button class="share-menu-item device-settings-link" id="share-menu-settings" role="menuitem">
+              <span>Configurações da transmissão</span>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+            </button>
+            <div class="share-menu-footer" id="share-menu-status"></div>
+          </div>
+          <div class="device-sub hidden" id="share-submenu" role="menu" aria-label="Qualidade da transmissão">
+            <div class="device-sub-list">
+              <div class="share-submenu-label">Taxa de quadros</div>
+              <div id="share-fps-options"></div>
+              <div class="share-menu-separator"></div>
+              <div class="share-submenu-label">Resolução</div>
+              <div id="share-resolution-options"></div>
+              <div class="share-menu-separator"></div>
+              <div class="share-submenu-label">Áudio (estéreo)</div>
+              <div id="share-audio-quality-options"></div>
+            </div>
+          </div>
+        </div>
+      </footer>
+
+      <!-- 0. LOGIN SCREEN (Exact match with Kennyy Monochrome Bot) -->
+      <div id="login-screen" class="login-screen hidden">
+        <div class="login-splash" aria-hidden="true"></div>
+        <div class="login-panel">
+          <h1 class="login-logo"><span class="accent">k</span>ennyy</h1>
+          <div class="login-content">
+            <h2 class="login-title">Faça login para continuar</h2>
+            <div class="login-actions">
+            <button class="btn-discord" id="btn-discord-login">
+              <svg fill="currentColor" width="20px" height="20px" viewBox="0 -28.5 256 256" xmlns="http://www.w3.org/2000/svg">
+                <path d="M216.856339,36.4637674 C200.170669,28.8471444 182.261276,23.3644265 163.483165,20.0890691 C163.090623,19.9863484 162.701198,20.2104523 162.5318,20.5732152 C160.279627,25.0454316 157.733796,30.706173 155.93297,35.4262104 C135.539828,32.3892706 115.352467,32.3892706 95.3400511,35.4262104 C93.5392257,30.706173 90.8906377,25.0454316 88.6384643,20.5732152 C88.4690666,20.2104523 88.0796417,19.9863484 87.6870997,20.0890691 C68.9089886,23.3644265 51.0542385,28.8471444 34.3139257,36.4637674 C34.1293717,36.5478496 34.0041235,36.7061324 33.9575825,36.8927599 C3.67039014,81.8239088 -3.10925249,125.688846 1.34114251,168.948293 C1.36511475,169.176461 1.48805988,169.387121 1.67098481,169.525547 C23.9536893,185.836058 45.4533031,195.666991 66.5295171,202.138766 C66.8643194,202.241487 67.2281861,202.083204 67.4127401,201.76442 C72.3619557,195.048382 76.7725906,187.971512 80.6033708,180.536551 C80.8037307,180.147126 80.5516086,179.697412 80.125916,179.551322 C73.1895697,176.924844 66.5511394,173.743126 60.1983058,169.967828 C59.7226065,169.684817 59.6917637,168.995966 60.1345914,168.66579 C61.5036724,167.625807 62.8645371,166.551061 64.1672322,165.4542 C64.3813351,165.26353 64.6983038,165.228581 64.9504258,165.352737 C106.840924,184.453723 150.316075,184.453723 191.733735,165.352737 C191.985857,165.228581 192.302826,165.26353 192.516928,165.4542 C193.819624,166.551061 195.180488,167.625807 196.551648,168.66579 C196.994475,168.995966 196.963632,169.684817 196.485854,169.967828 C190.133021,173.743126 183.492512,176.924844 176.556166,179.551322 C176.130473,179.697412 175.878351,180.147126 176.078711,180.536551 C179.909491,187.971512 184.320126,195.048382 189.269341,201.76442 C189.453895,202.083204 189.817762,202.241487 190.152564,202.138766 C211.228778,195.666991 232.728392,185.836058 255.011097,169.525547 C255.194022,169.387121 255.316967,169.176461 255.340939,168.948293 C260.627725,120.252069 248.874133,76.5169492 216.856339,36.4637674 Z M86.8282361,141.442998 C76.7725906,141.442998 68.4878235,132.227443 68.4878235,120.916965 C68.4878235,109.606488 76.5722308,100.390932 86.8282361,100.390932 C97.1084224,100.390932 105.393189,109.70425 105.19283,120.916965 C105.19283,132.227443 97.1084224,141.442998 86.8282361,141.442998 Z M169.453846,141.442998 C159.398201,141.442998 151.113434,132.227443 151.113434,120.916965 C151.113434,109.606488 159.197841,100.390932 169.453846,100.390932 C179.734032,100.390932 188.018799,109.70425 187.818439,120.916965 C187.818439,132.227443 179.734032,141.442998 169.453846,141.442998 Z"/>
+              </svg>
+              <span>Entrar com Discord</span>
+            </button>
+            <button class="btn-guest" id="btn-guest-login" type="button">Entrar como convidado</button>
+            </div>
+            <p class="login-terms">
+              <span>Ao entrar você concorda com os</span>
+              <a href="https://kennyy.com.br/kscreen/terms.html" target="_blank" rel="noopener">Termos de Uso</a>
+            </p>
+          </div>
+          <nav class="login-socials" aria-label="Links sociais">
+            <a class="login-social-btn" href="https://x.com/konnyoung" target="_blank" rel="noopener" aria-label="X (Twitter)">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.901 1.153h3.68l-8.04 9.19L24 22.846h-7.406l-5.8-7.584-6.638 7.584H.474l8.6-9.83L0 1.154h7.594l5.243 6.932ZM17.61 20.644h2.039L6.486 3.24H4.298Z"/></svg>
+            </a>
+            <a class="login-social-btn" href="https://youtube.com/@konnyoung" target="_blank" rel="noopener" aria-label="YouTube">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
+            </a>
+            <a class="login-social-btn" href="https://github.com/konnyoung" target="_blank" rel="noopener" aria-label="GitHub">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>
+            </a>
+          </nav>
+        </div>
+      </div>
+
+      <!-- 4. MINIMALIST HOME SCREEN (mockups/pagina-inicial Exact Match) -->
+      <div class="home-screen-container hidden" id="home-screen">
+        <div class="home-content-card">
+          <!-- Logo: kScreen in font K2D (clean, no AI explanatory text) -->
+          <h1 class="home-logo">
+            <span class="home-logo-k">k</span><span class="home-logo-screen">Screen</span>
+          </h1>
+
+          <!-- Button: Criar sala (327x48px, #F53F5F): opens the room settings modal -->
+          <button class="home-create-btn" id="btn-home-create">
+            Criar sala
+          </button>
+
+          <!-- Label: Entrar em uma sala -->
+          <div class="home-join-label">Entrar em uma sala</div>
+
+          <!-- Input + OK Row: 235px input + 84px button -->
+          <form class="home-join-form" id="home-join-form">
+            <input
+              type="text"
+              id="home-room-input"
+              class="home-room-input"
+              placeholder="xxx-xxx-xxx"
+              maxlength="11"
+              inputmode="text"
+              aria-label="Código da sala"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <button type="submit" class="home-ok-btn" id="btn-home-ok">
+              OK
+            </button>
+          </form>
+
+          <!-- Links: kennyy (music bot) and this project's source code -->
+          <div class="home-links">
+            <a class="home-link-btn home-link-kennyy" href="https://kennyy.com.br" target="_blank" rel="noopener">
+              <img src="/favicon.ico" alt="" width="24" height="24" />
+              <span>Melhor bot de música</span>
+            </a>
+            <a class="home-link-btn home-link-source" href="https://github.com/konnyoung/kscreen" target="_blank" rel="noopener">
+              <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>
+              <span>Código-fonte</span>
+            </a>
+          </div>
+        </div>
+
+        <!-- Bottom User Dock (45px circular avatar + Username + Logout) -->
+        <div class="home-user-dock" id="home-user-dock">
+          <img class="home-user-avatar" id="home-user-avatar" src="/avatar.png" alt="Avatar do Usuário" />
+          <span class="home-user-name" id="home-user-name"></span>
+          <button class="home-settings-btn" id="btn-home-settings" title="Configurações (Ctrl+,)" aria-label="Configurações">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M10.56 1.1c-.46.05-.7.53-.64.98.18 1.16-.19 2.2-.98 2.53-.8.33-1.79-.15-2.49-1.1-.27-.36-.78-.52-1.14-.24-.77.59-1.45 1.27-2.04 2.04-.28.36-.12.87.24 1.14.96.7 1.43 1.7 1.1 2.49-.33.8-1.37 1.16-2.53.98-.45-.07-.93.18-.99.64a11.1 11.1 0 0 0 0 2.88c.06.46.54.7.99.64 1.16-.18 2.2.19 2.53.98.33.8-.14 1.79-1.1 2.49-.36.27-.52.78-.24 1.14.59.77 1.27 1.45 2.04 2.04.36.28.87.12 1.14-.24.7-.95 1.7-1.43 2.49-1.1.8.33 1.16 1.37.98 2.53-.07.45.18.93.64.99a11.1 11.1 0 0 0 2.88 0c.46-.06.7-.54.64-.99-.18-1.16.19-2.2.98-2.53.8-.33 1.79.14 2.49 1.1.27.36.78.52 1.14.24.77-.59 1.45-1.27 2.04-2.04.28-.36.12-.87-.24-1.14-.96-.7-1.43-1.7-1.1-2.49.33-.8 1.37-1.16 2.53-.98.45.07.93-.18.99-.64a11.1 11.1 0 0 0 0-2.88c-.06-.46-.54-.7-.99-.64-1.16.18-2.2-.19-2.53-.98-.33-.8.14-1.79 1.1-2.49.36-.27.52-.78.24-1.14a11.07 11.07 0 0 0-2.04-2.04c-.36-.28-.87-.12-1.14.24-.7.96-1.7 1.43-2.49 1.1-.8-.33-1.16-1.37-.98-2.53.07-.45-.18-.93-.64-.99a11.1 11.1 0 0 0-2.88 0zM16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0z" clip-rule="evenodd"/></svg>
+          </button>
+          <button class="home-logout-btn" id="btn-home-logout" title="Sair da conta" aria-label="Sair da conta">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+              <polyline points="16 17 21 12 16 7"></polyline>
+              <line x1="21" y1="12" x2="9" y2="12"></line>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- New room settings (same card as the Kennyy web player modals) -->
+      <div class="modal-backdrop hidden" id="create-room-modal">
+        <form class="plm-modal" id="create-room-form" role="dialog" aria-modal="true" aria-labelledby="create-room-title">
+          <header class="plm-head"><h3 id="create-room-title">Nova sala</h3></header>
+          <div class="plm-body">
+            <div class="plm-error hidden" id="create-room-error" role="alert"></div>
+            <label class="plm-field">
+              <span class="plm-label">Senha (opcional)</span>
+              <input type="password" class="plm-input" id="create-room-password" maxlength="64" autocomplete="new-password" />
+            </label>
+            <div class="plm-inline">
+              <span class="plm-label" id="create-room-limit-label">Limite</span>
+              <div class="plm-segmented" role="radiogroup" aria-labelledby="create-room-limit-label">
+                <label><input type="radio" name="create-room-limit" value="2"><span>2 pessoas</span></label>
+                <label><input type="radio" name="create-room-limit" value="5"><span>5 pessoas</span></label>
+                <label><input type="radio" name="create-room-limit" value="10"><span>10 pessoas</span></label>
+                <label><input type="radio" name="create-room-limit" value="0" checked><span>ilimitado</span></label>
+              </div>
+            </div>
+          </div>
+          <footer class="plm-foot">
+            <span class="plm-foot-spacer"></span>
+            <button type="button" class="plm-btn plm-btn-ghost" data-close-modal>Cancelar</button>
+            <button type="submit" class="plm-btn plm-btn-accent" id="create-room-submit">Criar sala</button>
+          </footer>
+        </form>
+      </div>
+
+      <!-- Guest profile: name (required), photo and name color (optional) -->
+      <div class="modal-backdrop hidden" id="guest-modal">
+        <form class="plm-modal guest-modal" id="guest-form" role="dialog" aria-modal="true" aria-labelledby="guest-modal-title" novalidate>
+          <header class="plm-head"><h3 id="guest-modal-title">Entrar como convidado</h3></header>
+          <div class="plm-body guest-body">
+            <div class="plm-error hidden" id="guest-error" role="alert"></div>
+            <div class="guest-grid">
+              <div class="guest-avatar-col">
+                <button type="button" class="guest-avatar-pick" id="guest-avatar-pick" aria-label="Escolher foto de perfil">
+                  <img id="guest-avatar-preview" src="/avatars/1.jpg" alt="" />
+                  <span class="guest-avatar-hint">Trocar foto</span>
+                </button>
+                <span class="guest-avatar-note">Até 5MB<br>PNG, JPEG, GIF, WebP...</span>
+                <button type="button" class="guest-link hidden" id="guest-avatar-remove">Remover foto</button>
+                <input type="file" id="guest-avatar-input" accept="image/*" hidden />
+              </div>
+              <div class="guest-fields">
+                <label class="plm-field">
+                  <span class="plm-label">Nome de exibição</span>
+                  <input type="text" class="plm-input" id="guest-name" maxlength="32" autocomplete="nickname" required />
+                </label>
+                <div class="plm-field">
+                  <span class="plm-label">Cor do perfil</span>
+                  <div class="guest-color-bar">
+                    <button type="button" class="guest-color-chip" id="guest-color-btn" aria-label="Escolher cor do perfil"></button>
+                    <input type="text" class="guest-color-hex" id="guest-color-hex" maxlength="7" spellcheck="false" placeholder="Automática" aria-label="Cor do perfil (hex)" />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <footer class="plm-foot">
+            <span class="plm-foot-spacer"></span>
+            <button type="button" class="plm-btn plm-btn-ghost" data-close-modal>Cancelar</button>
+            <button type="submit" class="plm-btn plm-btn-accent" id="guest-submit">Criar</button>
+          </footer>
+        </form>
+      </div>
+
+      <!-- Confirmation ("Tem certeza?") -->
+      <div class="modal-backdrop hidden" id="confirm-modal">
+        <div class="plm-modal plm-compact" role="alertdialog" aria-modal="true" aria-labelledby="confirm-modal-title">
+          <header class="plm-head"><h3 id="confirm-modal-title"></h3></header>
+          <div class="plm-body"><p class="plm-copy" id="confirm-modal-message"></p></div>
+          <footer class="plm-foot">
+            <span class="plm-foot-spacer"></span>
+            <button type="button" class="plm-btn plm-btn-ghost" id="confirm-modal-cancel">Cancelar</button>
+            <button type="button" class="plm-btn plm-btn-accent" id="confirm-modal-ok"></button>
+          </footer>
+        </div>
+      </div>
+
+      <!-- Password prompt for protected rooms (same card as the Kennyy web player modals) -->
+      <div class="modal-backdrop hidden" id="room-password-modal">
+        <form class="plm-modal plm-compact" id="room-password-form" role="dialog" aria-modal="true" aria-labelledby="room-password-title">
+          <header class="plm-head"><h3 id="room-password-title">Sala com senha</h3></header>
+          <div class="plm-body">
+            <div class="plm-error hidden" id="room-password-error" role="alert"></div>
+            <label class="plm-field">
+              <span class="plm-label">Senha de <span class="plm-code" id="room-password-code"></span></span>
+              <input type="password" class="plm-input" id="room-password-input" maxlength="64" autocomplete="off" />
+            </label>
+          </div>
+          <footer class="plm-foot">
+            <span class="plm-foot-spacer"></span>
+            <button type="button" class="plm-btn plm-btn-ghost" id="room-password-cancel">Cancelar</button>
+            <button type="submit" class="plm-btn plm-btn-accent" id="room-password-submit">Entrar</button>
+          </footer>
+        </form>
+      </div>
+
+      <!-- 5. ADMIN PANEL (Ctrl+Shift+D / "kstatus"): same shell as the Kennyy bot's admin panel -->
+      <div class="modal-backdrop hidden" id="diagnostics-modal">
+        <div class="admin-shell" role="dialog" aria-modal="true" aria-labelledby="admin-title" tabindex="-1">
+          <nav class="admin-nav" aria-label="Painel admin">
+            <div class="admin-nav-brand"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg><span>Painel admin</span></div>
+            <button type="button" class="admin-nav-link active" data-section="overview" aria-current="page">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
+              <span class="admin-nav-label">Visão geral</span>
+            </button>
+            <div class="admin-nav-group">Esta sala</div>
+            <button type="button" class="admin-nav-link" data-section="connections">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+              <span class="admin-nav-label">Conexões</span>
+              <span class="admin-nav-badge" id="admin-badge-connections"></span>
+            </button>
+            <button type="button" class="admin-nav-link" data-section="log">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+              <span class="admin-nav-label">Registro</span>
+            </button>
+            <div class="admin-nav-group">Servidor</div>
+            <button type="button" class="admin-nav-link" data-section="rooms">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="4"/><path d="M2 21a7 7 0 0 1 14 0M17 11a4 4 0 0 0 0-8M22 21a7 7 0 0 0-4-6.3"/></svg>
+              <span class="admin-nav-label">Salas</span>
+              <span class="admin-nav-badge" id="admin-badge-rooms"></span>
+            </button>
+            <button type="button" class="admin-nav-link" data-section="turn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="6" rx="1"/><rect x="3" y="14" width="18" height="6" rx="1"/><line x1="7" y1="7" x2="7.01" y2="7"/><line x1="7" y1="17" x2="7.01" y2="17"/></svg>
+              <span class="admin-nav-label">TURN (legado)</span>
+              <span class="admin-nav-badge" id="admin-badge-turn"></span>
+            </button>
+            <button type="button" class="admin-nav-link" data-section="sfu">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="2.5"/><circle cx="5" cy="19" r="2.5"/><circle cx="19" cy="19" r="2.5"/><path d="M12 7.5v4M12 11.5l-5.5 5.5M12 11.5l5.5 5.5"/></svg>
+              <span class="admin-nav-label">Servidores de mídia</span>
+              <span class="admin-nav-badge" id="admin-badge-sfu"></span>
+            </button>
+            <div class="admin-nav-group">Sistema</div>
+            <button type="button" class="admin-nav-link" data-section="system">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>
+              <span class="admin-nav-label">Sistema</span>
+            </button>
+          </nav>
+
+          <div class="admin-main">
+            <header class="admin-main-head">
+              <div class="admin-main-heading">
+                <h2 class="admin-main-title" id="admin-title">Visão geral</h2>
+                <p class="admin-main-crumb" id="admin-crumb">Painel admin</p>
+              </div>
+              <div class="admin-main-tools">
+                <button type="button" class="admin-refresh-btn" id="btn-admin-refresh" title="Atualizar" aria-label="Atualizar">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                </button>
+                <button type="button" class="admin-close-btn" id="btn-close-diagnostics" aria-label="Fechar">&times;</button>
+              </div>
+            </header>
+
+            <div class="admin-main-body">
+              <!-- Visão geral -->
+              <section class="admin-section" data-section="overview">
+                <div class="admin-kpis">
+                  <button type="button" class="admin-kpi admin-kpi-clickable" data-goto="rooms"><span class="admin-kpi-label">Salas com gente</span><span class="admin-kpi-value" id="admin-rooms">--</span></button>
+                  <button type="button" class="admin-kpi admin-kpi-clickable" data-goto="rooms"><span class="admin-kpi-label">Pessoas no kScreen</span><span class="admin-kpi-value" id="admin-people">--</span></button>
+                  <button type="button" class="admin-kpi admin-kpi-clickable" data-goto="rooms"><span class="admin-kpi-label">P2P / SFU</span><span class="admin-kpi-value" id="admin-p2p">--</span></button>
+                  <button type="button" class="admin-kpi admin-kpi-clickable" data-goto="turn"><span class="admin-kpi-label">Via TURN (legado)</span><span class="admin-kpi-value" id="admin-turn-users">--</span></button>
+                  <button type="button" class="admin-kpi admin-kpi-clickable" data-goto="connections"><span class="admin-kpi-label">Menor ping</span><span class="admin-kpi-value" id="stats-ping">--</span></button>
+                </div>
+                <div class="admin-dash">
+                  <section class="admin-card">
+                    <div class="admin-card-head">
+                      <h3 class="admin-card-title">Salas ativas</h3>
+                      <button type="button" class="admin-card-link" data-goto="rooms">Ver todas</button>
+                    </div>
+                    <div class="admin-rows" id="admin-rooms-preview"></div>
+                  </section>
+                  <div class="admin-dash-side">
+                    <section class="admin-card hidden" id="admin-attention">
+                      <div class="admin-card-head"><h3 class="admin-card-title">Atenção</h3></div>
+                      <div id="admin-alerts"></div>
+                    </section>
+                    <section class="admin-card">
+                      <div class="admin-card-head">
+                        <h3 class="admin-card-title">Esta sala</h3>
+                        <button type="button" class="admin-card-link" data-goto="connections">Detalhes</button>
+                      </div>
+                      <div id="admin-peers-preview"></div>
+                    </section>
+                    <section class="admin-card">
+                      <div class="admin-card-head">
+                        <h3 class="admin-card-title">Servidores</h3>
+                        <button type="button" class="admin-card-link" data-goto="system">Detalhes</button>
+                      </div>
+                      <div id="admin-servers-preview"></div>
+                    </section>
+                  </div>
+                </div>
+              </section>
+
+              <!-- Conexões (esta sala) -->
+              <section class="admin-section hidden" data-section="connections">
+                <div class="admin-kpis">
+                  <div class="admin-kpi admin-kpi-wide"><span class="admin-kpi-label">Tipo de conexão</span><span class="admin-kpi-value admin-kpi-text" id="stats-conn-type">--</span></div>
+                  <div class="admin-kpi"><span class="admin-kpi-label">Menor ping</span><span class="admin-kpi-value" id="stats-ping-2">--</span></div>
+                  <div class="admin-kpi"><span class="admin-kpi-label">Protocolo</span><span class="admin-kpi-value" id="stats-protocol">--</span></div>
+                </div>
+                <section class="admin-card">
+                  <div class="admin-card-head">
+                    <h3 class="admin-card-title">Participantes</h3>
+                    <button type="button" class="admin-card-link" id="btn-ice-restart">Renovar rotas (ICE restart)</button>
+                    <button type="button" class="admin-card-link admin-card-link-plain" id="btn-open-second-tab">Abrir 2ª aba de teste</button>
+                  </div>
+                  <div class="admin-rows" id="telemetry-peers-table"></div>
+                </section>
+              </section>
+
+              <!-- Registro -->
+              <section class="admin-section hidden" data-section="log">
+                <section class="admin-card admin-card-fill">
+                  <div class="log-console" id="log-console"></div>
+                </section>
+              </section>
+
+              <!-- Salas -->
+              <section class="admin-section hidden" data-section="rooms">
+                <section class="admin-card">
+                  <div class="admin-rows" id="admin-rooms-table"></div>
+                </section>
+              </section>
+
+              <!-- TURN -->
+              <section class="admin-section hidden" data-section="turn">
+                <div class="admin-kpis">
+                  <div class="admin-kpi"><span class="admin-kpi-label">Pessoas via TURN</span><span class="admin-kpi-value" id="admin-turn-users-2">--</span></div>
+                  <div class="admin-kpi"><span class="admin-kpi-label">Repassado desde que ligou</span><span class="admin-kpi-value" id="admin-turn-bytes">--</span></div>
+                  <div class="admin-kpi"><span class="admin-kpi-label">No ar há</span><span class="admin-kpi-value" id="admin-turn-uptime">--</span></div>
+                </div>
+                <section class="admin-card">
+                  <div class="admin-card-head"><h3 class="admin-card-title">Quem está passando pelo TURN</h3></div>
+                  <div class="admin-rows" id="admin-turn-table"></div>
+                </section>
+              </section>
+
+              <!-- Servidores de mídia (nós SFU / LiveKit) -->
+              <section class="admin-section hidden" data-section="sfu">
+                <div class="admin-kpis">
+                  <div class="admin-kpi"><span class="admin-kpi-label">Nós saudáveis</span><span class="admin-kpi-value" id="admin-sfu-healthy">--</span></div>
+                  <div class="admin-kpi"><span class="admin-kpi-label">Saída agora</span><span class="admin-kpi-value" id="admin-sfu-out">--</span></div>
+                  <div class="admin-kpi"><span class="admin-kpi-label">Entrada agora</span><span class="admin-kpi-value" id="admin-sfu-in">--</span></div>
+                  <div class="admin-kpi"><span class="admin-kpi-label">Tráfego hoje</span><span class="admin-kpi-value" id="admin-sfu-today">--</span></div>
+                  <div class="admin-kpi"><span class="admin-kpi-label">Salas SFU / P2P</span><span class="admin-kpi-value" id="admin-sfu-rooms-kpi">--</span></div>
+                </div>
+
+                <section class="admin-card">
+                  <div class="admin-card-head">
+                    <h3 class="admin-card-title">Tráfego geral</h3>
+                    <div class="sfu-range" role="group" aria-label="Período">
+                      <button type="button" class="sfu-range-btn active" data-range="1h">1 h</button>
+                      <button type="button" class="sfu-range-btn" data-range="24h">24 h</button>
+                    </div>
+                  </div>
+                  <div class="sfu-chart" id="admin-sfu-chart-total"></div>
+                  <div class="sfu-legend"><span class="sfu-key out"></span>Saída (para quem assiste) <span class="sfu-key in"></span>Entrada (de quem transmite)</div>
+                  <div class="sfu-days" id="admin-sfu-days"></div>
+                </section>
+
+                <section class="admin-card">
+                  <div class="admin-card-head">
+                    <h3 class="admin-card-title">Nós</h3>
+                    <button type="button" class="admin-card-link" id="btn-sfu-add">+ Adicionar nó</button>
+                  </div>
+                  <form class="sfu-form hidden" id="admin-sfu-form" autocomplete="off">
+                    <h4 class="sfu-form-title" id="admin-sfu-form-title">Novo nó</h4>
+                    <div class="sfu-form-grid">
+                      <label class="sfu-field"><span>Endereço</span><input type="text" name="url" placeholder="wss://sfu2.kennyy.com.br" required spellcheck="false" /></label>
+                      <label class="sfu-field"><span>Secret</span><input type="password" name="secret" placeholder="LIVEKIT_API_SECRET do nó" spellcheck="false" autocomplete="new-password" /></label>
+                      <label class="sfu-field"><span>Nome <small>(opcional)</small></span><input type="text" name="name" placeholder="São Paulo 2" maxlength="40" /></label>
+                      <label class="sfu-field"><span>Chave da API <small>(opcional)</small></span><input type="text" name="key" placeholder="kscreen" spellcheck="false" maxlength="64" /></label>
+                    </div>
+                    <p class="sfu-form-hint" id="admin-sfu-form-hint">O nó é testado ao salvar. A chave padrão é a que o install-livekit.sh gera (kscreen).</p>
+                    <div class="sfu-form-actions">
+                      <button type="submit" class="sfu-btn primary" id="admin-sfu-save">Salvar e testar</button>
+                      <button type="button" class="sfu-btn" id="admin-sfu-cancel">Cancelar</button>
+                      <span class="sfu-form-result" id="admin-sfu-form-result" role="status"></span>
+                    </div>
+                  </form>
+                  <div class="sfu-nodes" id="admin-sfu-nodes"></div>
+                </section>
+
+                <section class="admin-card">
+                  <div class="admin-card-head"><h3 class="admin-card-title">Salas e modo</h3></div>
+                  <div class="admin-rows" id="admin-sfu-rooms"></div>
+                </section>
+
+                <section class="admin-card">
+                  <div class="admin-card-head"><h3 class="admin-card-title">Regras</h3></div>
+                  <form class="sfu-settings" id="admin-sfu-settings">
+                    <label class="sfu-field sfu-field-inline"><span>Salas ficam em P2P até</span><input type="number" name="meshMax" min="0" max="16" step="1" /><span>pessoas</span></label>
+                    <label class="sfu-check"><input type="checkbox" name="meshReturn" /> Voltar para P2P quando der (sala diminuiu, ou quem não tinha P2P saiu ou trocou de rede)</label>
+                    <label class="sfu-check"><input type="checkbox" name="autoFailover" /> Mover as salas automaticamente quando um nó cair</label>
+                    <label class="sfu-check"><input type="checkbox" name="predictP2P" /> Prever quem não tem P2P (4G/5G, NAT simétrico) e já entrar no SFU</label>
+                    <p class="sfu-form-hint">0 = sempre SFU. Quem não consegue P2P direto com alguém leva a sala para o SFU, seja qual for o tamanho: na hora, se a rede dela já indica isso, ou depois de uma tentativa de 10 s.</p>
+                    <div class="sfu-form-actions">
+                      <button type="submit" class="sfu-btn primary">Salvar regras</button>
+                      <span class="sfu-form-result" id="admin-sfu-settings-result" role="status"></span>
+                    </div>
+                    <p class="sfu-form-hint" id="admin-sfu-storage"></p>
+                  </form>
+                </section>
+              </section>
+
+              <!-- Sistema -->
+              <section class="admin-section hidden" data-section="system">
+                <section class="admin-card">
+                  <div class="admin-card-head"><h3 class="admin-card-title">Site</h3></div>
+                  <div class="admin-facts" id="admin-site-facts"></div>
+                </section>
+                <section class="admin-card">
+                  <div class="admin-card-head"><h3 class="admin-card-title">TURN</h3></div>
+                  <div class="admin-facts" id="admin-turn-facts"></div>
+                </section>
+              </section>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 6. TOAST CONTAINER -->
+      <div class="toast-container" id="toast-container" aria-live="polite"></div>
+
+      <!-- 7. DISCORD-STYLE CONTEXT MENU FOR TRANSMISSIONS -->
+      <div id="video-context-menu" class="discord-context-menu hidden" role="menu" aria-label="Opções do participante">
+        <button type="button" class="ctx-item" id="ctx-row-profile" role="menuitem">Abrir perfil</button>
+        <div class="ctx-separator" id="ctx-sep-profile"></div>
+        <button type="button" class="ctx-item ctx-watch-stop" id="ctx-row-watch" role="menuitem">Parar de assistir</button>
+        <button type="button" class="ctx-item" id="ctx-row-popout" role="menuitem">Abrir em outra janela</button>
+        <div class="ctx-separator" id="ctx-sep-watch"></div>
+        <div class="ctx-volume-box" id="ctx-volume-box">
+          <div class="ctx-volume-title">Volume</div>
+          <div class="ctx-volume-row">
+            <button type="button" class="ctx-speaker" id="ctx-btn-mute" title="Silenciar" aria-label="Silenciar" aria-pressed="false">
+              <svg class="spk-on" width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 8v8a4.5 4.5 0 0 0 2.5-4zM14 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6z"/></svg>
+              <svg class="spk-off hidden" width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 9v6h4l5 5V4L7 9H3zm18.3 6.9-1.4 1.4-2.9-2.9-2.9 2.9-1.4-1.4 2.9-2.9-2.9-2.9 1.4-1.4 2.9 2.9 2.9-2.9 1.4 1.4-2.9 2.9z"/></svg>
+            </button>
+            <input type="range" id="ctx-volume-slider" min="0" max="200" step="1" value="100" class="device-slider" aria-label="Volume" />
+          </div>
+        </div>
+        <div class="ctx-separator" id="ctx-sep-person"></div>
+        <label class="ctx-check" id="ctx-row-video"><span>Desativar vídeo</span><input type="checkbox" id="ctx-video-off"><span class="ctx-box" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 12.5 10 17.5 19 7"/></svg></span></label>
+        <div class="ctx-separator" id="ctx-sep-view"></div>
+        <label class="ctx-check"><span>Mostrar participantes sem vídeo</span><input type="checkbox" id="ctx-show-novideo"><span class="ctx-box" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 12.5 10 17.5 19 7"/></svg></span></label>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

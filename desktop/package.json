@@ -1,0 +1,145 @@
+{
+  "name": "kscreen-desktop",
+  "productName": "kScreen",
+  "version": "1.6.9",
+  "description": "kScreen - compartilhamento de tela P2P com captura nativa",
+  "author": {
+    "name": "Kennyy",
+    "email": "kscreen@kennyy.com.br"
+  },
+  "private": true,
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev --server=https://localhost:5173",
+    "icon": "electron scripts/make-icon.js",
+    "build:audio": "node scripts/build-audio.js",
+    "dist": "npm run build:audio && electron-builder --win",
+    "dist:dir": "npm run build:audio && electron-builder --win --dir",
+    "dist:linux": "electron-builder --linux AppImage flatpak",
+    "dist:linux:docker": "node scripts/dist-linux-docker.js"
+  },
+  "devDependencies": {
+    "electron": "^45.2.3",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "br.com.kennyy.kscreen",
+    "productName": "kScreen",
+    "copyright": "Copyright © 2026 Kennyy",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "build/icon.png",
+      "package.json"
+    ],
+    "protocols": [
+      {
+        "name": "kScreen",
+        "schemes": [
+          "kscreen"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "artifactName": "kScreen-Setup-${version}.${ext}",
+      "extraResources": [
+        {
+          "from": "native/kscreen-audio.exe",
+          "to": "kscreen-audio.exe"
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": true,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "kScreen",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/installerHeaderIcon.ico",
+      "installerSidebar": "build/installerSidebar.bmp",
+      "uninstallerSidebar": "build/installerSidebar.bmp",
+      "installerLanguages": [
+        "pt_BR"
+      ],
+      "language": "1046",
+      "multiLanguageInstaller": false,
+      "uninstallDisplayName": "kScreen",
+      "include": "build/installer.nsh"
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "flatpak",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png",
+      "executableName": "kscreen",
+      "category": "Network",
+      "synopsis": "Compartilhamento de tela P2P",
+      "description": "Compartilhe a tela com os amigos em alta qualidade, direto e sem servidor no meio.",
+      "maintainer": "Kennyy <kscreen@kennyy.com.br>",
+      "vendor": "Kennyy",
+      "artifactName": "kscreen-${version}-${arch}.${ext}",
+      "desktop": {
+        "entry": {
+          "Name": "kScreen",
+          "StartupWMClass": "kscreen",
+          "Keywords": "screen;share;stream;tela;"
+        }
+      },
+      "syncDesktopName": true
+    },
+    "flatpak": {
+      "runtime": "org.freedesktop.Platform",
+      "runtimeVersion": "24.08",
+      "sdk": "org.freedesktop.Sdk",
+      "base": "org.electronjs.Electron2.BaseApp",
+      "baseVersion": "24.08",
+      "finishArgs": [
+        "--share=ipc",
+        "--share=network",
+        "--socket=wayland",
+        "--socket=fallback-x11",
+        "--socket=pulseaudio",
+        "--device=dri",
+        "--device=all",
+        "--filesystem=xdg-download",
+        "--talk-name=org.freedesktop.Notifications",
+        "--talk-name=org.freedesktop.Flatpak"
+      ]
+    },
+    "appImage": {
+      "artifactName": "kscreen-${version}-${arch}.AppImage"
+    }
+  },
+  "homepage": "https://screen.kennyy.com.br",
+  "desktopName": "kscreen.desktop"
+}
