@@ -73,8 +73,10 @@ function normalizeRoomId(id) {
   return raw;
 }
 
+// Up to 9 characters it looks like a generated code (xxx-xxx-xxx); longer ones are custom codes.
 function formatRoomInput(text) {
-  const raw = String(text).toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 9);
+  const raw = String(text).toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 20);
+  if (raw.length > 9) return raw;
   if (raw.length <= 3) return raw;
   if (raw.length <= 6) return `${raw.slice(0, 3)}-${raw.slice(3)}`;
   return `${raw.slice(0, 3)}-${raw.slice(3, 6)}-${raw.slice(6)}`;
@@ -85,6 +87,11 @@ function extractRoomCode(text) {
   const value = String(text || '').trim();
   const match = value.match(/[?&]room=([a-z0-9-]+)/i);
   return match ? match[1] : value;
+}
+
+// Generated codes (xxx-xxx-xxx) or custom ones (4 to 20 letters or numbers).
+function isValidRoomCode(code) {
+  return /^[a-z0-9]{4,20}$/.test(String(code || '').replace(/-/g, ''));
 }
 
 function escapeHtml(str) {
@@ -423,6 +430,45 @@ new MutationObserver(() => btnDockChat?.classList.toggle('active', document.body
   .observe(document.body, { attributes: true, attributeFilter: ['class'] });
 
 // ==========================================================================
+// Discord photos that stopped loading (the person changed it): any <img> on the page, in the
+// call, the chat or the people list. It shows the default picture, the server fetches the
+// current photo and every image of that person switches to it (the others get it on their poll).
+// ==========================================================================
+const DISCORD_AVATAR_RE = /^https:\/\/cdn\.discordapp\.com\/avatars\/(\d{5,25})\//;
+const freshAvatars = new Map(); // userId -> Promise<string|null>
+
+function refreshDiscordAvatar(userId) {
+  if (!freshAvatars.has(userId)) {
+    freshAvatars.set(userId, fetch('/api/avatar/refresh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId })
+    }).then(r => (r.ok ? r.json() : null)).then(d => d?.avatarUrl || null).catch(() => null));
+  }
+  return freshAvatars.get(userId);
+}
+
+document.addEventListener('error', (e) => {
+  const img = e.target;
+  if (!(img instanceof HTMLImageElement)) return;
+  const match = DISCORD_AVATAR_RE.exec(img.currentSrc || img.src);
+  if (!match) return;
+  const [broken, userId] = match;
+  img.dataset.brokenAvatar = userId;
+  img.src = '/avatar.png';
+  refreshDiscordAvatar(userId).then((url) => {
+    if (!url || url.startsWith(broken)) return;
+    for (const other of document.querySelectorAll('img')) {
+      if (other.dataset.brokenAvatar === userId || (other.src || '').startsWith(broken)) {
+        delete other.dataset.brokenAvatar;
+        other.src = url;
+      }
+    }
+    if (currentUser && String(currentUser.id) === userId) currentUser.avatarUrl = url;
+  });
+}, true);
+
+// ==========================================================================
 // AUTHENTICATION & NAVIGATION (Discord login is required)
 // ==========================================================================
 
@@ -736,10 +782,126 @@ $('confirm-modal-ok')?.addEventListener('click', () => settleConfirm(true));
 $('confirm-modal-cancel')?.addEventListener('click', () => settleConfirm(false));
 confirmModal?.addEventListener('pointerdown', (e) => { if (e.target === confirmModal) settleConfirm(false); });
 
+// Recent room settings (code, password, limit), per account and only in this browser:
+// one click in the "Nova sala" modal fills the form like last time. Pinned ones (up to 3)
+// come first and never drop off the list; the other recent ones are the last 4.
+const RECENT_ROOMS_MAX = 4;
+const RECENT_PINNED_MAX = 3;
+const recentRoomsKey = () => `kscreen.recentRooms.${currentUser?.id || 'anon'}`;
+const LIMIT_LABELS = { 0: 'ilimitado', 2: '2 pessoas', 5: '5 pessoas', 10: '10 pessoas' };
+const RECENT_ICON_CLOCK = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></svg>';
+const RECENT_ICON_LOCK = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>';
+const RECENT_ICON_USERS = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="4"/><path d="M2 21a7 7 0 0 1 14 0M17 11a4 4 0 0 0 0-8M22 21a7 7 0 0 0-4-6.3"/></svg>';
+const RECENT_ICON_PIN = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>';
+const RECENT_ICON_PIN_FILLED = RECENT_ICON_PIN.replace('fill="none"', 'fill="currentColor"').replace('width="14" height="14"', 'width="16" height="16"');
+const RECENT_ICON_X = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+
+function loadRecentRooms() {
+  try {
+    const list = JSON.parse(localStorage.getItem(recentRoomsKey()) || '[]');
+    return Array.isArray(list) ? trimRecentRooms(list.filter(r => r && typeof r === 'object').map(r => ({
+      code: typeof r.code === 'string' && isValidRoomCode(r.code) ? r.code : '',
+      password: typeof r.password === 'string' ? r.password.slice(0, 64) : '',
+      maxPeers: r.maxPeers in LIMIT_LABELS ? Number(r.maxPeers) : 0,
+      pinned: r.pinned === true
+    }))) : [];
+  } catch { return []; }
+}
+
+// Pinned first (at most 3), then the last 4 recent ones.
+function trimRecentRooms(list) {
+  return [
+    ...list.filter(r => r.pinned).slice(0, RECENT_PINNED_MAX),
+    ...list.filter(r => !r.pinned).slice(0, RECENT_ROOMS_MAX)
+  ];
+}
+
+function saveRecentRooms(list) {
+  try { localStorage.setItem(recentRoomsKey(), JSON.stringify(trimRecentRooms(list))); } catch { /* storage blocked */ }
+}
+
+const sameRecent = (a, b) => a.code === b.code && a.password === b.password && a.maxPeers === b.maxPeers;
+
+// A pinned room created again stays where it is; anything else goes to the top of the recent ones.
+function rememberRecentRoom(entry) {
+  const list = loadRecentRooms();
+  if (list.some(r => r.pinned && sameRecent(r, entry))) return;
+  saveRecentRooms([{ ...entry, pinned: false }, ...list.filter(r => !sameRecent(r, entry))]);
+}
+
+function renderRecentRooms() {
+  const box = $('create-room-recent');
+  const listEl = $('create-room-recent-list');
+  if (!box || !listEl) return;
+  const list = loadRecentRooms();
+  const pinFull = list.filter(r => r.pinned).length >= RECENT_PINNED_MAX;
+  box.classList.toggle('hidden', !list.length);
+  listEl.innerHTML = list.map((r, i) => `
+    <div class="room-recent${r.pinned ? ' is-pinned' : ''}">
+      <button type="button" class="room-recent-pick" data-recent="${i}">
+        <span class="room-recent-icon"${r.pinned ? ' title="Fixada"' : ''}>${r.pinned ? RECENT_ICON_PIN_FILLED : RECENT_ICON_CLOCK}</span>
+        <span class="room-recent-code${r.code ? '' : ' is-generated'}">${r.code ? escapeHtml(normalizeRoomId(r.code)) : '<span>Código gerado</span>'}</span>
+        <span class="room-recent-tags">
+          ${r.password ? `<span class="room-recent-tag" title="Sala com senha">${RECENT_ICON_LOCK}</span>` : ''}
+          <span class="room-recent-tag" title="${LIMIT_LABELS[r.maxPeers]}">${RECENT_ICON_USERS}${r.maxPeers || '∞'}</span>
+        </span>
+      </button>
+      <span class="room-recent-actions">
+        ${r.pinned
+          ? `<button type="button" class="room-recent-action" data-recent-pin="${i}" title="Desafixar" aria-label="Desafixar" aria-pressed="true">${RECENT_ICON_PIN}</button>`
+          : `<button type="button" class="room-recent-action" data-recent-pin="${i}" title="${pinFull ? 'Até 3 salas fixadas' : 'Fixar'}" aria-label="Fixar" aria-pressed="false"${pinFull ? ' disabled' : ''}>${RECENT_ICON_PIN}</button>`}
+        <button type="button" class="room-recent-action" data-recent-remove="${i}" title="Remover" aria-label="Remover">${RECENT_ICON_X}</button>
+      </span>
+    </div>`).join('');
+}
+
+$('create-room-recent-list')?.addEventListener('click', (e) => {
+  const pin = e.target.closest('[data-recent-pin]');
+  if (pin) {
+    const list = loadRecentRooms();
+    const r = list[Number(pin.dataset.recentPin)];
+    if (!r || (!r.pinned && list.filter(x => x.pinned).length >= RECENT_PINNED_MAX)) return;
+    r.pinned = !r.pinned;
+    saveRecentRooms(list);
+    renderRecentRooms();
+    return;
+  }
+  const remove = e.target.closest('[data-recent-remove]');
+  if (remove) {
+    const list = loadRecentRooms();
+    list.splice(Number(remove.dataset.recentRemove), 1);
+    saveRecentRooms(list);
+    renderRecentRooms();
+    return;
+  }
+  const pick = e.target.closest('[data-recent]');
+  const r = pick && loadRecentRooms()[Number(pick.dataset.recent)];
+  if (!r) return;
+  $('create-room-code').value = r.code;
+  $('create-room-password').value = r.password;
+  const radio = createRoomForm.querySelector(`input[name="create-room-limit"][value="${r.maxPeers}"]`);
+  if (radio) radio.checked = true;
+  createRoomError.classList.add('hidden');
+  for (const el of $('create-room-recent-list').querySelectorAll('.room-recent-pick')) el.classList.toggle('is-active', el === pick);
+  $('create-room-submit').focus();
+});
+
 btnHomeCreate?.addEventListener('click', () => {
   createRoomForm.reset();
   createRoomError.classList.add('hidden');
-  openModal(createRoomModal, $('create-room-password'));
+  renderRecentRooms();
+  openModal(createRoomModal, $('create-room-code'));
+});
+
+// Typing over a picked recent room: it is no longer that one.
+createRoomForm?.addEventListener('input', () => {
+  for (const el of createRoomForm.querySelectorAll('.room-recent-pick.is-active')) el.classList.remove('is-active');
+});
+
+// Custom code: only what the server accepts (lowercase letters and numbers).
+$('create-room-code')?.addEventListener('input', (e) => {
+  const clean = e.target.value.toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (clean !== e.target.value) e.target.value = clean;
 });
 
 createRoomModal?.querySelector('[data-close-modal]')?.addEventListener('click', () => closeModal(createRoomModal));
@@ -748,12 +910,20 @@ createRoomModal?.addEventListener('pointerdown', (e) => { if (e.target === creat
 createRoomForm?.addEventListener('submit', async (e) => {
   e.preventDefault();
   const password = $('create-room-password').value;
+  const code = $('create-room-code').value.toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (code && !isValidRoomCode(code)) {
+    createRoomError.textContent = 'O código deve ter de 4 a 20 letras ou números.';
+    createRoomError.classList.remove('hidden');
+    $('create-room-code').focus();
+    return;
+  }
   const maxPeers = Number(createRoomForm.querySelector('input[name="create-room-limit"]:checked')?.value) || 0;
   const submit = $('create-room-submit');
   submit.disabled = true;
   try {
-    const roomId = await enterRoom(() => engine.createRoom(myNickname, engine.myAvatarUrl, { password, maxPeers }), submit, 'Criando...');
+    const roomId = await enterRoom(() => engine.createRoom(myNickname, engine.myAvatarUrl, { password, maxPeers, code }), submit, 'Criando...');
     closeModal(createRoomModal);
+    rememberRecentRoom({ code, password, maxPeers });
     showToast(`Sala ${roomId} criada.`);
   } catch (err) {
     console.error('Erro ao criar sala:', err);
@@ -812,18 +982,18 @@ roomPasswordModal?.addEventListener('pointerdown', (e) => {
 // Joins a room; if it has a password, asks for it. Resolves true when inside the room.
 async function joinRoomByCode(code, busyButton) {
   try {
-    await enterRoom(() => engine.joinRoom(code, myNickname, engine.myAvatarUrl), busyButton, '...');
+    await enterRoom(() => engine.joinRoom(code, myNickname, engine.myAvatarUrl, { fresh: true }), busyButton, '...');
     return true;
   } catch (err) {
     if (err.code !== 'PASSWORD_REQUIRED' && err.code !== 'TOO_MANY') throw err;
-    return askRoomPassword(code, (password) => enterRoom(() => engine.joinRoom(code, myNickname, engine.myAvatarUrl, { password })));
+    return askRoomPassword(code, (password) => enterRoom(() => engine.joinRoom(code, myNickname, engine.myAvatarUrl, { password, fresh: true })));
   }
 }
 
 async function handleJoinHomeRoom() {
   const code = normalizeRoomId(homeRoomInput.value);
-  if (!/^[a-z0-9]{3}-[a-z0-9]{3}-[a-z0-9]{3}$/.test(code)) {
-    showToast('Digite o código completo da sala (xxx-xxx-xxx).');
+  if (!isValidRoomCode(code)) {
+    showToast(code ? 'Código inválido.' : 'Digite o código da sala.');
     homeRoomInput.focus();
     return;
   }
@@ -831,7 +1001,7 @@ async function handleJoinHomeRoom() {
     if (await joinRoomByCode(code, btnHomeOk)) showToast(`Você entrou na sala ${code}.`);
   } catch (err) {
     console.error('Falha ao entrar na sala:', err);
-    showToast(err.code === 'ROOM_FULL' ? err.message : 'Não foi possível entrar na sala.');
+    showToast(['ROOM_FULL', 'ROOM_NOT_FOUND'].includes(err.code) ? err.message : 'Não foi possível entrar na sala.');
   }
 }
 
@@ -848,7 +1018,7 @@ function joinFromUrl() {
   if (!currentUser || engine.activeRoomId) return;
   joinRoomByCode(roomParam)
     .then((joined) => { if (joined) showToast(`Você entrou na sala ${roomParam}.`); })
-    .catch((err) => showToast(err.code === 'ROOM_FULL' ? err.message : 'Não foi possível entrar na sala do link.'));
+    .catch((err) => showToast(err.code === 'ROOM_FULL' ? err.message : err.code === 'ROOM_NOT_FOUND' ? 'O código do link é inválido.' : 'Não foi possível entrar na sala do link.'));
 }
 
 // ==========================================================================
@@ -958,6 +1128,7 @@ function getParticipantList() {
   }];
 
   for (const p of engine.peers.values()) {
+    if (p.preview) lastPreviews.set(p.id, p.preview);
     list.push({
       id: p.id,
       name: p.name || 'Amigo',
@@ -999,7 +1170,8 @@ function getParticipantList() {
       screenAudioTrack: null,
       micTrack: null,
       watching: engine.watching.has(g.id),
-      preview: null,
+      // Last still frame we had of their stream (before the connection dropped or changed).
+      preview: g.state?.s ? lastPreviews.get(g.id) || null : null,
       cameraOn: false,
       cameraStream: null,
       status: g.status,
@@ -1012,12 +1184,24 @@ function getParticipantList() {
   return list;
 }
 
+// Last preview image per person, so a stream card keeps its picture while the connection to them
+// is (re)made (P2P -> SFU, reconnecting).
+const lastPreviews = new Map();
+
+// A stream with no picture yet (connection to them being made, P2P -> SFU, server still
+// connecting): the card stays, with a spinner, instead of vanishing until the video arrives.
+function hasLiveVideo(stream) {
+  return !!stream?.getVideoTracks().some(t => t.readyState === 'live');
+}
+
 // Discord-style: every person always has their own card (camera or avatar), and a stream is a
 // separate card next to it. The person card keeps the id `<pid>:user`, so focus doesn't jump.
 function getTiles(participants) {
   const tiles = [];
   for (const p of participants) {
-    const hasScreen = !!(p.isStreaming && p.stream);
+    // The server's state (or the control channel) says they stream: the card shows even while
+    // the video is not here yet, so nobody sees "ninguém transmitindo" while connecting.
+    const hasScreen = !!p.isStreaming;
     const hasCamera = !!(p.cameraOn && p.cameraStream) && (p.isLocal || !getAudioPrefs(p.id).videoOff);
     {
       tiles.push({
@@ -1043,8 +1227,9 @@ function getTiles(participants) {
         pid: p.id,
         id: `${p.id}:screen`,
         kind: 'screen',
-        mainStream: watched ? p.stream : null,
+        mainStream: watched && p.stream ? p.stream : null,
         unwatched: !watched,
+        connecting: !!watched && !p.isLocal && !hasLiveVideo(p.stream),
         mirror: false,
         isStreaming: true,
         // Voice state lives on the person's card.
@@ -1122,30 +1307,41 @@ const SOUND_FILES = {
   cameraOn: 'cam_on', cameraOff: 'cam_off',
   mention: 'ping'
 };
+// The files are downloaded as the page opens (no AudioContext needed for that) and decoded
+// once there is one, so the first cue (creating a room) is already the real sound.
+const soundFetches = new Map(Object.values(SOUND_FILES).map(file => [file,
+  fetch(`${import.meta.env.BASE_URL}sfx/${file}.ogg`)
+    .then(r => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(r.status))))
+    .catch(() => null)
+]));
 const soundBuffers = new Map();
-let soundsLoading = false;
+const soundDecodes = new Map();
 function loadSounds(ctx) {
-  if (soundsLoading) return;
-  soundsLoading = true;
-  for (const file of new Set(Object.values(SOUND_FILES))) {
-    fetch(`${import.meta.env.BASE_URL}sfx/${file}.ogg`)
-      .then(r => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(r.status))))
-      .then(data => ctx.decodeAudioData(data))
-      .then(buf => soundBuffers.set(file, buf))
-      .catch(() => { /* keeps the synthesized fallback */ });
+  if (soundDecodes.size) return;
+  for (const [file, data] of soundFetches) {
+    soundDecodes.set(file, data
+      .then(bytes => (bytes ? ctx.decodeAudioData(bytes.slice(0)) : null))
+      .then(buf => { if (buf) soundBuffers.set(file, buf); return buf; })
+      .catch(() => null)); // keeps the synthesized fallback
   }
 }
 
-function playSound(name, { force = false } = {}) {
+// Not decoded yet: wait a little for the file before falling back to the synthesized blip.
+const SOUND_WAIT_MS = 1500;
+async function playSound(name, { force = false } = {}) {
   if (!force && (!soundPrefs.enabled || soundPrefs.off.includes(name))) return;
   const ctx = getAudioContext();
   if (!ctx) return;
   const level = soundPrefs.volume / 100;
   loadSounds(ctx);
+  const file = SOUND_FILES[name];
+  if (file && !soundBuffers.has(file) && soundDecodes.has(file)) {
+    await Promise.race([soundDecodes.get(file), new Promise(r => setTimeout(r, SOUND_WAIT_MS))]);
+  }
   if (ctx.state !== 'running') return;
   const out = ctx.createGain();
   out.connect(ctx.destination);
-  const buffer = soundBuffers.get(SOUND_FILES[name]);
+  const buffer = soundBuffers.get(file);
   if (buffer) {
     out.gain.value = 0.5 * level * Math.min(1, devicePrefs.outVolume / 100);
     const src = ctx.createBufferSource();
@@ -1178,7 +1374,8 @@ function playSound(name, { force = false } = {}) {
 // Join / leave and streams of other people are found by comparing with the last render.
 const soundState = { room: null, since: 0, connected: new Set(), streaming: new Set(), audiences: new Map() };
 function checkRoomSounds() {
-  const room = engine.activeRoomId;
+  // Only once the server let us in: a wrong code or password never plays the join sound.
+  const room = engine.roomJoined ? engine.activeRoomId : null;
   if (room !== soundState.room) {
     soundState.room = room;
     soundState.since = Date.now();
@@ -1331,7 +1528,7 @@ function renderGridView(participants) {
       card = createParticipantCard(p.id, 'grid-participant-card', p.pid);
       card.innerHTML = `
         <div class="grid-card-avatar-content"><img class="grid-card-avatar" alt="" /></div>
-        <div class="stream-cover hidden"><button type="button" class="watch-stream-btn">Assistir transmissão</button></div>
+        <div class="stream-cover hidden"><button type="button" class="watch-stream-btn">Assistir transmissão</button>${spinnerHtml()}</div>
         <div class="card-nametag"><span class="live-dot hidden"></span><span class="nametag-text"></span><span class="voice-icons"></span><span class="peer-state hidden"></span><span class="signal hidden" role="img"><i></i><i></i><i></i></span></div>`;
     }
     if (!card.dataset.wired) {
@@ -1563,8 +1760,10 @@ function stopWatching(pid) {
 // Still frame of a stream we don't watch, behind the "Assistir transmissão" button.
 function renderStreamCover(cover, tile) {
   if (!cover) return;
-  cover.classList.toggle('hidden', !tile.unwatched);
-  const image = tile.unwatched && tile.preview ? tile.preview : '';
+  const connecting = !tile.unwatched && !!tile.connecting;
+  cover.classList.toggle('hidden', !tile.unwatched && !connecting);
+  cover.classList.toggle('is-connecting', connecting);
+  const image = (tile.unwatched || connecting) && tile.preview ? tile.preview : '';
   if (cover.dataset.image !== String(image.length) + image.slice(-24)) {
     cover.dataset.image = String(image.length) + image.slice(-24);
     cover.style.backgroundImage = image ? `url("${image}")` : '';
@@ -1958,7 +2157,7 @@ participantsStrip?.addEventListener('wheel', (e) => {
 // Same cover and viewer avatars as the grid cards.
 const spotlightCover = document.createElement('div');
 spotlightCover.className = 'stream-cover hidden';
-spotlightCover.innerHTML = '<button type="button" class="watch-stream-btn">Assistir transmissão</button>';
+spotlightCover.innerHTML = `<button type="button" class="watch-stream-btn">Assistir transmissão</button>${spinnerHtml()}`;
 spotlightCover.querySelector('button').addEventListener('click', (e) => {
   e.stopPropagation();
   watchStream(spotlightMainCard.dataset.pid, spotlightMainCard.dataset.id);

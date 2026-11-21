@@ -282,6 +282,54 @@ function createProfiles(secret) {
   };
 }
 
+// Discord photo URL from a /users response (no photo: one of Discord's default ones).
+function discordAvatarUrl(userData) {
+  return userData.avatar
+    ? `https://cdn.discordapp.com/avatars/${userData.id}/${userData.avatar}.png?size=128`
+    : `https://cdn.discordapp.com/embed/avatars/${(BigInt(userData.id || 0) >> 22n) % 6n}.png`;
+}
+
+// People change their Discord photo and the one in the session (taken at login) stops loading.
+// With a bot token (DISCORD_BOT_TOKEN, a bot of the same app is enough, no server needed) the
+// current photo is read from GET /users/{id}, at most once every few minutes per person.
+const AVATAR_TTL_MS = 10 * 60 * 1000;
+const AVATAR_RETRY_MS = 60 * 1000; // after an error or a 429
+function createDiscordAvatars(botToken) {
+  const cache = new Map(); // userId -> { url, at, until, pending }
+  let warned = false;
+  return {
+    enabled: !!botToken,
+    // Resolves the current photo URL, or null (no token, Discord down, rate limited).
+    async current(userId) {
+      if (!botToken || !/^\d{5,25}$/.test(String(userId))) return null;
+      const now = Date.now();
+      const entry = cache.get(userId) || {};
+      if (entry.url && now - entry.at < AVATAR_TTL_MS) return entry.url;
+      if (entry.until > now) return entry.url || null;
+      if (entry.pending) return entry.pending;
+      entry.pending = fetch(`https://discord.com/api/v10/users/${userId}`, {
+        headers: { Authorization: `Bot ${botToken}` },
+        signal: AbortSignal.timeout(3000)
+      }).then(async (res) => {
+        if (res.status === 401 && !warned) {
+          warned = true;
+          console.warn('[DISCORD-AVATAR] DISCORD_BOT_TOKEN recusado pelo Discord: os avatares não serão atualizados.');
+        }
+        if (!res.ok) throw new Error(`Discord /users ${res.status}`);
+        const url = discordAvatarUrl(await res.json());
+        Object.assign(entry, { url, at: Date.now(), until: 0 });
+        return url;
+      }).catch(() => {
+        entry.until = Date.now() + AVATAR_RETRY_MS;
+        return entry.url || null;
+      }).finally(() => { entry.pending = null; });
+      cache.set(userId, entry);
+      if (cache.size > 5000) cache.delete(cache.keys().next().value);
+      return entry.pending;
+    }
+  };
+}
+
 function cookie(name, value, { maxAge, secure, path = '/' }) {
   return `${name}=${encodeURIComponent(value)}; Path=${path}; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure ? '; Secure' : ''}`;
 }
@@ -299,6 +347,13 @@ function createSignalingMiddleware(env) {
   const profiles = createProfiles(sessionSecret);
   // Desktop-app logins waiting to be redeemed: one-time code -> { user, challenge, returnTo, exp }
   const desktopCodes = new Map();
+  const discordAvatars = createDiscordAvatars(env.DISCORD_BOT_TOKEN || '');
+  // A new photo reaches people already in a call on their next poll.
+  const setPeerAvatars = (userId, avatarUrl) => {
+    for (const room of rooms.values()) {
+      for (const peer of room.peers.values()) if (peer.userId === userId) peer.avatarUrl = avatarUrl;
+    }
+  };
   const chat = createChat({ rooms, normalizeRoomId, cleanPeerId, sendJson, readJson, env, secret: sessionSecret });
   // Shared with turn-server/kscreen_turn.py (its TURN_SECRET); empty = no TURN offered.
   const turnSecret = env.TURN_SECRET || '';
@@ -432,9 +487,7 @@ function createSignalingMiddleware(env) {
         if (!userRes.ok) throw new Error(`Discord /users/@me ${userRes.status}`);
 
         const userData = await userRes.json();
-        const avatarUrl = userData.avatar
-          ? `https://cdn.discordapp.com/avatars/${userData.id}/${userData.avatar}.png?size=128`
-          : `https://cdn.discordapp.com/embed/avatars/${(BigInt(userData.id || 0) >> 22n) % 6n}.png`;
+        const avatarUrl = discordAvatarUrl(userData);
 
         const discordName = cleanName(userData.global_name || userData.username, 'Usuário');
         const sessionUser = profiles.apply(req, {
@@ -469,10 +522,20 @@ function createSignalingMiddleware(env) {
       }
 
       if (req.method === 'GET' && url.pathname === '/api/auth/me') {
-        const user = sessions.read(req);
+        let user = sessions.read(req);
         if (!user) {
           sendJson(res, 401, { error: 'Não autenticado' });
           return;
+        }
+        // Discord photo changed since the login: the session gets the new one.
+        if (!user.guest && discordAvatars.enabled) {
+          const avatarUrl = await discordAvatars.current(user.id);
+          if (avatarUrl && avatarUrl !== user.avatarUrl) {
+            const { exp: _exp, ...rest } = user;
+            user = { ...rest, avatarUrl };
+            res.setHeader('Set-Cookie', cookie(SESSION_COOKIE, sessions.encode(user), { maxAge: SESSION_MAX_AGE_S, secure: isHttps(req, publicUrl) }));
+            setPeerAvatars(user.id, avatarUrl);
+          }
         }
         const { exp, ...publicUser } = user;
         if (user.guest) publicUser.username = null;
@@ -545,6 +608,18 @@ function createSignalingMiddleware(env) {
         sendJson(res, 401, { error: 'Entre com o Discord para continuar.' });
         return;
       }
+      // Someone's Discord photo didn't load (they changed it): fetch the current one. Only for
+      // people who are in a call now, so this is no lookup of arbitrary Discord ids.
+      if (req.method === 'POST' && url.pathname === '/api/avatar/refresh') {
+        const data = await readJson(req).catch(() => ({}));
+        const userId = String(data.userId || '');
+        const inCall = [...rooms.values()].some(room => [...room.peers.values()].some(p => p.userId === userId && !p.guest));
+        const avatarUrl = inCall ? await discordAvatars.current(userId) : null;
+        if (avatarUrl) setPeerAvatars(userId, avatarUrl);
+        sendJson(res, avatarUrl ? 200 : 404, avatarUrl ? { avatarUrl } : { error: 'Sem avatar novo.' });
+        return;
+      }
+
       // A peer id can only be used by the Discord account that registered it.
       const ownPeer = (room, peerId) => {
         const peer = room?.peers.get(peerId);
@@ -711,10 +786,24 @@ function createSignalingMiddleware(env) {
           sendJson(res, 400, { error: `A senha pode ter no máximo ${MAX_PASSWORD_LENGTH} caracteres.` });
           return;
         }
+        // Custom code (optional): 4 to 20 letters or numbers; 9 of them become xxx-xxx-xxx.
         let roomId;
-        do {
-          roomId = `${part(3)}-${part(3)}-${part(3)}`;
-        } while (rooms.has(roomId));
+        if (data.code != null && data.code !== '') {
+          const raw = String(data.code).toLowerCase().replace(/-/g, '');
+          if (!/^[a-z0-9]{4,20}$/.test(raw)) {
+            sendJson(res, 400, { error: 'O código deve ter de 4 a 20 letras ou números.', code: 'CODE_INVALID' });
+            return;
+          }
+          roomId = normalizeRoomId(raw);
+          if (rooms.has(roomId)) {
+            sendJson(res, 409, { error: 'Esse código já está em uso.', code: 'CODE_TAKEN' });
+            return;
+          }
+        } else {
+          do {
+            roomId = `${part(3)}-${part(3)}-${part(3)}`;
+          } while (rooms.has(roomId));
+        }
 
         rooms.set(roomId, {
           id: roomId,
@@ -728,7 +817,7 @@ function createSignalingMiddleware(env) {
           ...(data.mode === 'sfu' && roomMode(data) === 'sfu' ? { modeLock: 'sfu' } : {}),
           fails: new Map() // userId -> { count, until }
         });
-        console.log(`[P2P-SIGNAL] Sala criada: ${roomId} por ${user.username}${password ? ' (com senha)' : ''}`);
+        console.log(`[P2P-SIGNAL] Sala criada: ${roomId} por ${user.username}${password ? ' (com senha)' : ''}${data.code ? ' (código personalizado)' : ''}`);
         sendJson(res, 200, { roomId, locked: !!password, maxPeers: rooms.get(roomId).maxPeers, mode: rooms.get(roomId).mode });
         return;
       }
@@ -744,9 +833,15 @@ function createSignalingMiddleware(env) {
         }
 
         let room = rooms.get(roomId);
+        // Typed code or invite link ("fresh"): the room has to exist. Re-joins of people already
+        // inside (server restart) and old pages don't send it, and still recreate the room.
+        if (!room && data.fresh === true) {
+          sendJson(res, 404, { error: 'Código inválido.', code: 'ROOM_NOT_FOUND' });
+          return;
+        }
         if (!room) {
-          // Entering a code directly works even if nobody created it first. After a server restart
-          // the members re-join with the room's password and people limit, which keeps both.
+          // After a server restart the members re-join with the room's password and people
+          // limit, which keeps both.
           const password = typeof data.password === 'string' && data.password.length <= MAX_PASSWORD_LENGTH ? data.password : '';
           room = {
             id: roomId,

@@ -341,7 +341,15 @@ export function createChat({ rooms, normalizeRoomId, cleanPeerId, sendJson, read
           const color = /^#[0-9a-f]{3}([0-9a-f]{3})?$/i.test(m['theme-color'] || '') ? m['theme-color'] : null;
           const large = m['twitter:card'] === 'summary_large_image'
             || (Number(m['og:image:width']) >= 400 && Number(m['og:image:width']) >= Number(m['og:image:height'] || 0));
-          if (title || description || image) embed = { type: 'link', url, site, title, description, image, color, large };
+          // GIF pages (Tenor, GIPHY and others that announce an animated image) show only the GIF,
+          // like Discord. The 'image' type is what older clients already render.
+          const gifPage = image && (/(^|\.)(tenor|giphy)\.com$/i.test(target.hostname)
+            || (/^image\/(gif|webp)$/i.test(m['og:image:type'] || '') && /^video/i.test(m['og:type'] || '')));
+          if (gifPage) {
+            const width = Number(m['og:image:width']) || 0;
+            const height = Number(m['og:image:height']) || 0;
+            embed = { type: 'image', url, image, gif: true, ...(width > 0 && height > 0 ? { width, height } : {}) };
+          } else if (title || description || image) embed = { type: 'link', url, site, title, description, image, color, large };
         } else {
           res.body?.cancel().catch(() => {});
         }

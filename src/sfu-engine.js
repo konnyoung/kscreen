@@ -15,6 +15,13 @@
 import { P2PEngine, SHARE_AUDIO_QUALITIES } from './webrtc.js';
 
 const MIC_BITRATE = 64_000;
+// P2P -> SFU without a gap: open P2P connections stay up (still carrying video, voice and
+// messages) until the media server delivers the same things, then close. This is the longest
+// they wait for that.
+const HANDOFF_MAX_MS = 12_000;
+// A new video through the media server replaces the P2P one only once it has a decoded frame,
+// so the card never goes black in between.
+const HANDOFF_FRAME_WAIT_MS = 5_000;
 const SFU_NET_RECHECK_MS = 30_000;
 const CAMERA_BITRATE = 1_200_000;
 // Data messages are split in parts the server forwards safely (reliable packets above ~15 KB
@@ -148,6 +155,14 @@ export class KScreenEngine extends P2PEngine {
     this.sfuSyncAgain = false;
     this.sfuRepublish = new Set();
     this.sfuStatsInterval = null;
+    // P2P -> SFU handoffs in progress: peer id -> { mesh, peer, got, sentReady, timer }
+    this.handoffs = new Map();
+    // A room that may need the media server: load its client ahead, so switching costs no download.
+    this.netProbe?.then((net) => { if (net && net.nat !== 'cone') this.sfuPreload(); });
+  }
+
+  sfuPreload() {
+    loadLivekit().catch(() => {});
   }
 
   isSfu() {
@@ -213,6 +228,8 @@ export class KScreenEngine extends P2PEngine {
   }
 
   async joinRoom(...args) {
+    // Any room can move to the media server; with its client loaded already, that costs no download.
+    this.sfuPreload();
     const roomId = await super.joinRoom(...args);
     if (this.isSfu() && this.activeRoomId) {
       this.log('Esta sala usa o servidor de mídia (SFU).');
@@ -225,7 +242,20 @@ export class KScreenEngine extends P2PEngine {
   // room's new mode.
   switchMode(mode) {
     this.log(`A sala mudou para ${mode === 'sfu' ? 'o servidor de mídia (SFU)' : 'P2P direto'}. Reconectando...`, 'warn');
-    for (const id of [...this.peers.keys()]) this.removePeer(id, { keepStream: true });
+    this.sfuEndAllHandoffs();
+    for (const [id, peer] of [...this.peers]) {
+      // To the SFU: working P2P connections stay until the media server shows the same person
+      // (sfuAddPeer takes them over), so streams and voice never stop. The rest goes now.
+      if (mode === 'sfu' && !peer.virtual && peer.pc?.connectionState === 'connected') {
+        peer.handoffPending = true;
+        clearTimeout(peer.timers.handoff);
+        peer.timers.handoff = setTimeout(() => {
+          if (this.peers.get(id) === peer) this.removePeer(id, { keepStream: true });
+        }, HANDOFF_MAX_MS);
+        continue;
+      }
+      this.removePeer(id, { keepStream: true });
+    }
     for (const f of this.linkFails.values()) clearTimeout(f.timer);
     this.linkFails.clear();
     this.sfuTraffic = null;
@@ -240,6 +270,7 @@ export class KScreenEngine extends P2PEngine {
   }
 
   disconnect(options) {
+    this.sfuEndAllHandoffs();
     super.disconnect(options);
     this.sfuClose();
     this.roomMode = null;
@@ -262,7 +293,7 @@ export class KScreenEngine extends P2PEngine {
     // room is a peer (e.g. back after a moment missing from the roster).
     if (!this.isSfu() || !this.sfu?.room) return;
     for (const participant of this.sfu.room.remoteParticipants.values()) {
-      if (this.roster.has(participant.identity) && !this.peers.has(participant.identity)) this.sfuAddPeer(participant);
+      if (this.roster.has(participant.identity) && !this.peers.get(participant.identity)?.virtual) this.sfuAddPeer(participant);
     }
   }
 
@@ -379,7 +410,7 @@ export class KScreenEngine extends P2PEngine {
 
   routeReport() {
     if (!this.isSfu()) return super.routeReport();
-    return [...this.peers.values()].filter(p => p.status === 'connected').map(p => `${p.id}.s`).join(',');
+    return [...this.peers.values()].filter(p => p.virtual && p.status === 'connected').map(p => `${p.id}.s`).join(',');
   }
 
   startStatsMonitoring() {
@@ -476,7 +507,7 @@ export class KScreenEngine extends P2PEngine {
         if (mine() && this.peers.get(id)?.virtual) this.removePeer(id, { keepStream: this.roster.has(id) });
       })
       .on(E.TrackPublished, (publication, participant) => {
-        const peer = mine() && this.peers.get(participant.identity);
+        const peer = mine() && this.sfuPeerOf(participant);
         if (peer) this.sfuUpdateSubscriptions(peer);
       })
       .on(E.TrackSubscribed, (track, publication, participant) => {
@@ -487,13 +518,13 @@ export class KScreenEngine extends P2PEngine {
       })
       .on(E.DataReceived, (payload, participant, kind, topic) => {
         if (!mine() || !participant) return;
-        const peer = this.peers.get(participant.identity) || this.sfuAddPeer(participant);
+        const peer = this.sfuPeerOf(participant);
         const channel = topic === TOPIC_FILES ? peer?.fileDc : topic === TOPIC_CONTROL ? peer?.dc : null;
         channel?.receive(payload);
       })
       .on(E.TrackStreamStateChanged, (publication, state, participant) => {
         // The server pauses a video when not even its lightest version fits our connection.
-        const peer = mine() && this.peers.get(participant.identity);
+        const peer = mine() && this.sfuVirtual(participant.identity);
         if (!peer || publication.source !== lk.Track.Source.ScreenShare || !this.watching.has(peer.id)) return;
         if (state === lk.Track.StreamState.Paused) {
           this.log(`O servidor pausou a transmissão de "${peer.name}" para você: sua conexão não está comportando nem a versão mais leve agora.`, 'warn');
@@ -551,7 +582,9 @@ export class KScreenEngine extends P2PEngine {
     const id = participant?.identity;
     if (!id || id === this.myPeerId || this.departed.has(id)) return null;
     const existing = this.peers.get(id);
-    if (existing) {
+    // Still on its P2P connection (the room just moved to the SFU): take it over below.
+    const mesh = existing && !existing.virtual ? existing : null;
+    if (existing && !mesh) {
       if (existing.participant !== participant) {
         existing.participant = participant;
         this.sfuUpdateSubscriptions(existing);
@@ -597,6 +630,7 @@ export class KScreenEngine extends P2PEngine {
         connectionShort: 'Servidor', connectionName: 'Via servidor de mídia (SFU)', protocol: 'UDP'
       }
     };
+    if (mesh) this.sfuAdoptMesh(peer, mesh);
     this.peers.set(id, peer);
     peer.dc = new PeerChannel(this, id, TOPIC_CONTROL);
     this.setupDataChannel(peer, peer.dc);
@@ -606,6 +640,7 @@ export class KScreenEngine extends P2PEngine {
     peer.dc.open();
     peer.fileDc.open();
     this.log(`"${peer.name}" conectado pelo servidor de mídia.`, 'success');
+    if (mesh) this.sfuSeedHandoff(peer);
     this.sfuUpdateSubscriptions(peer);
     this.refreshStatus();
     this.notifyPeersUpdate();
@@ -625,12 +660,27 @@ export class KScreenEngine extends P2PEngine {
   }
 
   sfuTrackSubscribed(track, publication, participant) {
-    const peer = this.peers.get(participant.identity) || this.sfuAddPeer(participant);
+    const peer = this.sfuPeerOf(participant);
     if (!peer) return;
     const S = this.sfu.lk.Track.Source;
     const mst = track.mediaStreamTrack;
     if (!mst) return;
-    switch (publication.source) {
+    // Handoff: the P2P video keeps playing until this one has a picture.
+    const video = publication.source === S.ScreenShare || publication.source === S.Camera;
+    if (video && this.handoffs.get(peer.id)?.peer === peer) {
+      this.sfuWhenDecoding(track).then(() => {
+        if (this.peers.get(peer.id) !== peer || publication.track !== track || !publication.isSubscribed) return;
+        this.sfuApplyTrack(peer, publication.source, mst);
+      });
+      return;
+    }
+    this.sfuApplyTrack(peer, publication.source, mst);
+  }
+
+  sfuApplyTrack(peer, source, mst) {
+    const S = this.sfu?.lk.Track.Source;
+    if (!S) return;
+    switch (source) {
       case S.ScreenShare:
         peer.screenStream = new MediaStream([mst]);
         if (!peer.statusFromChannel) peer.isStreaming = true;
@@ -648,12 +698,15 @@ export class KScreenEngine extends P2PEngine {
       default:
         return;
     }
+    const h = this.handoffs.get(peer.id);
+    if (h?.peer === peer) h.got.add(source);
     this.onPeerStream(peer.id, peer.remoteStream, mst, peer);
     this.notifyPeersUpdate();
+    if (h?.peer === peer) this.sfuHandoffCheck(peer.id);
   }
 
   sfuTrackUnsubscribed(track, publication, participant) {
-    const peer = this.peers.get(participant.identity);
+    const peer = this.sfuVirtual(participant.identity);
     if (!peer || !this.sfu) return;
     const S = this.sfu.lk.Track.Source;
     const mst = track.mediaStreamTrack;
@@ -684,6 +737,132 @@ export class KScreenEngine extends P2PEngine {
     }
     peer[key] = track;
     if (track && !peer.remoteStream.getTracks().includes(track)) peer.remoteStream.addTrack(track);
+  }
+
+  // --- P2P -> SFU HANDOFF ---
+  // When a P2P room moves to the media server, each working P2P connection is kept until both
+  // sides get, through the server, everything it was carrying (the stream being watched, camera,
+  // voice). Meanwhile the person on screen is already the media-server peer, playing the P2P
+  // tracks; each one is swapped for the server's as soon as it has a picture or sound. Then this
+  // side says so (`handoff_ready`, only to pages that announce `handoff` in caps), and the P2P
+  // connection closes once the other side said the same, or after HANDOFF_MAX_MS.
+
+  // The media-server peer for this id (never a P2P one waiting to be taken over).
+  sfuVirtual(id) {
+    const peer = this.peers.get(id);
+    return peer?.virtual ? peer : null;
+  }
+
+  sfuPeerOf(participant) {
+    return this.sfuVirtual(participant?.identity) || this.sfuAddPeer(participant);
+  }
+
+  // The new peer starts with what the P2P one knew and played.
+  sfuAdoptMesh(peer, mesh) {
+    for (const key of ['isStreaming', 'statusFromChannel', 'remoteHasAudio', 'micMuted', 'deafened', 'speaking', 'cameraOn', 'preview']) peer[key] = mesh[key];
+    peer.watching = new Set(mesh.watching);
+    const t = mesh.transceivers;
+    const seeded = {
+      screen: mesh.screenStream || null,
+      camera: mesh.cameraStream || null,
+      micTrack: t?.mic?.receiver.track || null,
+      screenAudioTrack: t?.screenAudio?.receiver.track || null
+    };
+    if (seeded.screen) peer.screenStream = seeded.screen;
+    if (seeded.camera) peer.cameraStream = seeded.camera;
+    // Out of the room's peers, but still connected: no rebuilds, no reports, no new signals.
+    for (const timer of Object.values(mesh.timers)) clearTimeout(timer);
+    mesh.timers = {};
+    mesh.handoffTo = peer;
+    const pc = mesh.pc;
+    pc.onnegotiationneeded = null;
+    pc.onicecandidate = null;
+    pc.ontrack = null;
+    pc.onconnectionstatechange = () => {
+      if (['failed', 'closed', 'disconnected'].includes(pc.connectionState)) this.sfuEndHandoff(peer.id);
+    };
+    const h = { mesh, peer, seeded, got: new Set(), sentReady: false, timer: null };
+    h.timer = setTimeout(() => this.sfuEndHandoff(peer.id), HANDOFF_MAX_MS);
+    this.handoffs.set(peer.id, h);
+  }
+
+  // Audio goes in after the channels exist (sfuSetAudio fills remoteStream).
+  sfuSeedHandoff(peer) {
+    const h = this.handoffs.get(peer.id);
+    if (!h) return;
+    for (const key of ['micTrack', 'screenAudioTrack']) {
+      if (h.seeded[key]?.readyState === 'live') this.sfuSetAudio(peer, key, h.seeded[key]);
+    }
+    for (const track of peer.remoteStream.getTracks()) this.onPeerStream(peer.id, peer.remoteStream, track, peer);
+    this.sfuHandoffCheck(peer.id);
+  }
+
+  // Ready when everything we use from them comes through the server now.
+  sfuHandoffCheck(id) {
+    const h = this.handoffs.get(id);
+    const S = this.sfu?.lk.Track.Source;
+    if (!h || !S || this.peers.get(id) !== h.peer) return;
+    const { peer, mesh } = h;
+    const need = [];
+    if (peer.isStreaming && this.watching.has(id)) need.push(S.ScreenShare);
+    if (peer.cameraOn) need.push(S.Camera);
+    if (!peer.micMuted) need.push(S.Microphone);
+    if (need.some(source => !h.got.has(source))) return;
+    if (!h.sentReady) {
+      h.sentReady = true;
+      if (mesh.canHandoff) this.sendTo(mesh, { type: 'handoff_ready' });
+    }
+    // Pages without the handoff don't wait for us (they closed already, or will).
+    if (!mesh.canHandoff || mesh.handoffPeerReady) this.sfuEndHandoff(id);
+  }
+
+  meshHandoffReady(mesh) {
+    const h = this.handoffs.get(mesh.id);
+    if (h?.mesh === mesh) this.sfuHandoffCheck(mesh.id);
+  }
+
+  sfuEndHandoff(id) {
+    const h = this.handoffs.get(id);
+    if (!h) return;
+    this.handoffs.delete(id);
+    clearTimeout(h.timer);
+    const { mesh, peer, seeded } = h;
+    mesh.pc.onconnectionstatechange = null;
+    // A moment later, so a `handoff_ready` just sent on it still reaches the other side.
+    setTimeout(() => {
+      mesh.handoffTo = null;
+      try { mesh.dc?.close(); } catch { /* already closed */ }
+      try { mesh.fileDc?.close(); } catch { /* already closed */ }
+      try { mesh.pc.close(); } catch { /* already closed */ }
+    }, 1000);
+    if (this.peers.get(id) !== peer) return;
+    // Whatever still plays from the P2P connection ends with it.
+    let changed = false;
+    if (seeded.screen && peer.screenStream === seeded.screen) { peer.screenStream = new MediaStream(); changed = true; }
+    if (seeded.camera && peer.cameraStream === seeded.camera) { peer.cameraStream = new MediaStream(); changed = true; }
+    for (const key of ['micTrack', 'screenAudioTrack']) {
+      if (seeded[key] && peer[key] === seeded[key]) { this.sfuSetAudio(peer, key, null); changed = true; }
+    }
+    if (changed) this.notifyPeersUpdate();
+  }
+
+  sfuEndAllHandoffs() {
+    for (const id of [...this.handoffs.keys()]) this.sfuEndHandoff(id);
+  }
+
+  // Resolves once this received video track has decoded a frame (or after a while, anyway).
+  async sfuWhenDecoding(track) {
+    const end = Date.now() + HANDOFF_FRAME_WAIT_MS;
+    while (Date.now() < end) {
+      try {
+        let decoded = false;
+        (await track.getRTCStatsReport?.())?.forEach((item) => {
+          if (item.type === 'inbound-rtp' && item.framesDecoded > 0) decoded = true;
+        });
+        if (decoded) return;
+      } catch { /* not receiving yet */ }
+      await sleep(150);
+    }
   }
 
   // --- PUBLISHING ---

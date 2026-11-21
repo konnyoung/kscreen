@@ -355,11 +355,24 @@ export class RoomChat {
     lightbox.className = 'chat-lightbox hidden';
     lightbox.innerHTML = '<img alt="" /><a class="chat-lightbox-open" target="_blank" rel="noopener noreferrer"></a>';
     document.body.appendChild(lightbox);
+
+    // Right-click menu on chat images and on the lightbox, same look as the other menus.
+    const imageMenu = document.createElement('div');
+    imageMenu.className = 'discord-context-menu chat-image-menu hidden';
+    imageMenu.setAttribute('role', 'menu');
+    imageMenu.setAttribute('aria-label', tr('Opções da imagem'));
+    imageMenu.innerHTML = `
+      <button type="button" class="ctx-item" data-img-action="copy" role="menuitem">${esc(tr('Copiar imagem'))}</button>
+      <button type="button" class="ctx-item" data-img-action="save" role="menuitem">${esc(tr('Salvar imagem'))}</button>
+      <div class="ctx-separator" data-img-external></div>
+      <button type="button" class="ctx-item" data-img-action="copy-link" data-img-external role="menuitem">${esc(tr('Copiar link'))}</button>
+      <button type="button" class="ctx-item" data-img-action="open" data-img-external role="menuitem">${esc(tr('Abrir no navegador'))}</button>`;
+    document.body.appendChild(imageMenu);
     watchEmojis(panel);
 
     const q = (sel) => panel.querySelector(sel);
     this.el = {
-      panel, lightbox,
+      panel, lightbox, imageMenu,
       title: q('.chat-head-title'),
       scroller: q('.chat-scroller'),
       list: q('.chat-list'),
@@ -544,6 +557,150 @@ export class RoomChat {
       else if (this.pickerMode) this.closePicker();
     });
     window.addEventListener('focus', () => this.markRead());
+    this.bindImageMenu();
+  }
+
+  bindImageMenu() {
+    const { el } = this;
+    const menu = el.imageMenu;
+    el.list.addEventListener('contextmenu', (e) => {
+      const item = e.target.closest('.chat-media-item');
+      if (!item || item.classList.contains('loading') || !item.dataset.full) return;
+      this.openImageMenu(e, item.dataset.full, item.querySelector('img')?.alt || '');
+    });
+    const lbImg = el.lightbox.querySelector('img');
+    lbImg.addEventListener('contextmenu', (e) => {
+      if (lbImg.src) this.openImageMenu(e, lbImg.getAttribute('src'), lbImg.alt || '');
+    });
+    // Right-clicking the dark area around the picture shows nothing (no browser menu either).
+    el.lightbox.addEventListener('contextmenu', (e) => { if (e.target !== lbImg) e.preventDefault(); });
+    menu.addEventListener('contextmenu', (e) => e.preventDefault());
+    menu.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-img-action]');
+      if (!btn) return;
+      const { src, name } = this.imageMenuTarget || {};
+      this.closeImageMenu();
+      if (!src) return;
+      const action = btn.dataset.imgAction;
+      if (action === 'copy') this.copyImage(src);
+      else if (action === 'save') this.saveImage(src, name);
+      else if (action === 'copy-link') {
+        navigator.clipboard?.writeText(src).then(() => this.toast('Link copiado.')).catch(() => this.toast('Não foi possível copiar.'));
+      } else if (action === 'open') window.open(src, '_blank', 'noopener,noreferrer');
+    });
+    // A click outside only closes the menu: it must not also close the lightbox behind it.
+    let swallowClick = false;
+    document.addEventListener('pointerdown', (e) => {
+      if (!this.imageMenuOpen() || menu.contains(e.target)) return;
+      this.closeImageMenu();
+      if (e.button === 0) {
+        swallowClick = true;
+        setTimeout(() => { swallowClick = false; }, 500);
+      }
+    }, true);
+    document.addEventListener('click', (e) => {
+      if (!swallowClick) return;
+      swallowClick = false;
+      e.stopPropagation();
+      e.preventDefault();
+    }, true);
+    window.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape' || !this.imageMenuOpen()) return;
+      e.stopImmediatePropagation();
+      this.closeImageMenu();
+    }, true);
+    window.addEventListener('blur', () => this.closeImageMenu());
+    window.addEventListener('resize', () => this.closeImageMenu());
+    el.scroller.addEventListener('scroll', () => this.closeImageMenu(), { passive: true });
+  }
+
+  imageMenuOpen() {
+    const menu = this.el.imageMenu;
+    return !menu.classList.contains('hidden') && !menu.classList.contains('fading-out');
+  }
+
+  openImageMenu(e, src, name) {
+    e.preventDefault();
+    e.stopPropagation();
+    const menu = this.el.imageMenu;
+    const abs = new URL(src, location.href).href;
+    // Room uploads need the session cookie and blob: URLs only live in this tab: no link for them.
+    const external = /^https?:/i.test(abs) && !new URL(abs).pathname.startsWith(`${API}/file/`);
+    this.imageMenuTarget = { src: abs, name };
+    menu.querySelectorAll('[data-img-external]').forEach(n => n.classList.toggle('hidden', !external));
+    menu.classList.remove('fading-out', 'hidden');
+    const rect = menu.getBoundingClientRect();
+    menu.style.left = `${Math.max(8, Math.min(e.clientX, window.innerWidth - rect.width - 8))}px`;
+    menu.style.top = `${Math.max(8, Math.min(e.clientY, window.innerHeight - rect.height - 8))}px`;
+  }
+
+  closeImageMenu() {
+    if (!this.imageMenuOpen()) return;
+    const menu = this.el.imageMenu;
+    menu.classList.add('fading-out');
+    const done = () => {
+      if (!menu.classList.contains('fading-out')) return; // reopened meanwhile
+      menu.classList.remove('fading-out');
+      menu.classList.add('hidden');
+    };
+    menu.addEventListener('animationend', done, { once: true });
+    setTimeout(done, 220);
+  }
+
+  async imageBlob(src) {
+    const res = await fetch(src, { credentials: 'same-origin', referrerPolicy: 'no-referrer' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.blob();
+  }
+
+  // The clipboard only takes PNG: other formats are redrawn (a GIF copies its first frame,
+  // like Discord). The promise goes straight into ClipboardItem to keep the click's permission.
+  async copyImage(src) {
+    if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined') {
+      this.toast('Seu navegador não permite copiar imagens.');
+      return;
+    }
+    const png = this.imageBlob(src).then(async (blob) => {
+      if (blob.type === 'image/png') return blob;
+      const bmp = await createImageBitmap(blob);
+      const canvas = document.createElement('canvas');
+      canvas.width = bmp.width;
+      canvas.height = bmp.height;
+      canvas.getContext('2d').drawImage(bmp, 0, 0);
+      bmp.close?.();
+      return new Promise((resolve, reject) => canvas.toBlob(b => (b ? resolve(b) : reject(new Error('toBlob'))), 'image/png'));
+    });
+    try {
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
+      this.toast('Imagem copiada.');
+    } catch {
+      this.toast('Não foi possível copiar a imagem.');
+    }
+  }
+
+  async saveImage(src, name) {
+    try {
+      const blob = await this.imageBlob(src);
+      const ext = (blob.type.split('/')[1] || 'png').replace('jpeg', 'jpg').replace(/\+.*$/, '');
+      let file = String(name || '').trim();
+      if (!file) {
+        try { file = decodeURIComponent(new URL(src).pathname.split('/').pop() || ''); } catch { file = ''; }
+      }
+      file = file.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').slice(0, 120);
+      if (!/\.[a-z0-9]{2,5}$/i.test(file)) file = `${file || 'imagem'}.${ext}`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = file;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+    } catch {
+      // The site does not let the page read the image: open it so the browser can save it.
+      if (/^https?:/i.test(src)) window.open(src, '_blank', 'noopener,noreferrer');
+      else this.toast('Não foi possível salvar a imagem.');
+    }
   }
 
   // Drag the left edge to resize (width remembered per viewer); double-click resets it.
@@ -938,12 +1095,14 @@ export class RoomChat {
 
     const content = m.content || '';
     const onlyMedia = !editing && isMediaUrl(content.trim()) && !/\s/.test(content.trim());
+    // A message that is only a GIF page link (Tenor, GIPHY) shows just the GIF, like Discord.
+    const onlyGifLink = !editing && !onlyMedia && (m.embeds || []).some(e => e.type === 'image' && e.gif && e.url === content.trim());
     if (editing) {
       html += `<div class="chat-edit">
         <textarea class="chat-edit-input" rows="1" maxlength="${MAX_CONTENT + 200}">${esc(content)}</textarea>
         <div class="chat-edit-hint">${esc(tr('Esc para'))} <a data-action="edit-cancel">${esc(tr('cancelar'))}</a> • ${esc(tr('Enter para'))} <a data-action="edit-save">${esc(tr('salvar'))}</a></div>
       </div>`;
-    } else if (content && !onlyMedia) {
+    } else if (content && !onlyMedia && !onlyGifLink) {
       const jumbo = isEmojiOnly(content) ? ' jumbo' : '';
       html += `<div class="chat-content${jumbo}">${formatContent(content, { mentionName: id => this.memberName(id), myId })}${m.editedAt ? `<span class="chat-edited" title="${esc(fullStamp(m.editedAt))}">${esc(tr('(editado)'))}</span>` : ''}</div>`;
     }
@@ -993,7 +1152,10 @@ export class RoomChat {
     for (const e of m.embeds || []) {
       if (e.type === 'image') {
         if (onlyMedia || !safeHttp(e.image)) continue;
-        html += `<div class="chat-media count-1"><button type="button" class="chat-media-item" data-full="${esc(e.image)}" style="max-width:400px"><img src="${esc(e.image)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentNode.classList.add('broken')" /></button></div>`;
+        const w = Number(e.width) || 0;
+        const h = Number(e.height) || 0;
+        const size = w > 0 && h > 0 ? `width:${Math.min(400, w, Math.round(300 * w / h))}px;aspect-ratio:${w}/${h};` : '';
+        html += `<div class="chat-media count-1"><button type="button" class="chat-media-item" data-full="${esc(e.image)}" style="max-width:min(400px, 100%);${size}"><img src="${esc(e.image)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentNode.classList.add('broken')" /></button></div>`;
         continue;
       }
       if (e.type === 'link') {
@@ -1061,7 +1223,7 @@ export class RoomChat {
     const spoiler = e.target.closest('.cm-spoiler');
     if (spoiler) { spoiler.classList.add('revealed'); return; }
     const mediaItem = e.target.closest('.chat-media-item');
-    if (mediaItem) { this.openLightbox(mediaItem.dataset.full); return; }
+    if (mediaItem) { this.openLightbox(mediaItem.dataset.full, mediaItem.querySelector('img')?.alt || ''); return; }
     const video = e.target.closest('.chat-embed-video');
     if (video && !video.querySelector('iframe')) {
       const iframe = document.createElement('iframe');
@@ -1128,8 +1290,9 @@ export class RoomChat {
     entry.el.classList.add('flash');
   }
 
-  openLightbox(src) {
+  openLightbox(src, name = '') {
     const { lightbox } = this.el;
+    lightbox.querySelector('img').alt = name;
     this.resetLightboxZoom?.();
     lightbox.querySelector('img').src = src;
     const link = lightbox.querySelector('a');

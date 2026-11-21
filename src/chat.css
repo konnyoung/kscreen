@@ -10,7 +10,7 @@
   --chat-text: #dbdee1;
   --chat-muted: #949ba4;
   --chat-faint: #6d6f78;
-  --chat-link: #f2708f;
+  --chat-link: #00a8fc;
   --chat-input: #1e1f24;
   --chat-code: #1e1f24;
   --chat-mention-bg: rgba(232, 54, 93, 0.3);
@@ -227,14 +227,14 @@ body.chat-open .chat-panel { display: flex; }
 .chat-media.count-2, .chat-media.count-4 { grid-template-columns: 1fr 1fr; }
 .chat-media.count-3 { grid-template-columns: 1fr 1fr 1fr; }
 .chat-media-item {
-  display: block; border: 0; padding: 0; background: #1e1f22; cursor: zoom-in;
+  display: block; border: 0; padding: 0; background: transparent; cursor: zoom-in;
   overflow: hidden; max-width: 100%;
 }
 .chat-media.count-1 .chat-media-item { border-radius: 8px; max-height: 300px; }
 .chat-media:not(.count-1) .chat-media-item { aspect-ratio: 1; }
 .chat-media-item img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .chat-media.count-1 .chat-media-item img { object-fit: contain; max-height: 300px; }
-.chat-media-item.broken { min-height: 60px; min-width: 140px; cursor: default; }
+.chat-media-item.broken { min-height: 60px; min-width: 140px; cursor: default; background: #1e1f22; }
 .chat-media-item.broken img { display: none; }
 .chat-media-item.broken::after {
   content: '⚠'; display: block; padding: 18px 12px; color: var(--chat-muted); font-size: 18px;
@@ -707,3 +707,6 @@ img.emoji { width: 1.375em; height: 1.375em; vertical-align: -0.3em; margin: 0 0
 .chat-tools button img.emoji { width: 17px; height: 17px; margin: 0; vertical-align: middle; }
 .chat-tools button svg { width: 17px; height: 17px; }
 @media (max-width: 760px) { .chat-tools { top: -28px; } }
+
+/* Right-click menu on chat images and the lightbox: above the lightbox, sized to its items */
+.discord-context-menu.chat-image-menu { width: auto; min-width: 200px; z-index: 2100; }

@@ -295,7 +295,7 @@
               id="home-room-input"
               class="home-room-input"
               placeholder="xxx-xxx-xxx"
-              maxlength="11"
+              maxlength="20"
               inputmode="text"
               aria-label="Código da sala"
               autocomplete="off"
@@ -342,6 +342,15 @@
           <header class="plm-head"><h3 id="create-room-title">Nova sala</h3></header>
           <div class="plm-body">
             <div class="plm-error hidden" id="create-room-error" role="alert"></div>
+            <div class="plm-field hidden" id="create-room-recent">
+              <span class="plm-label">Salas recentes</span>
+              <div class="room-recent-list" id="create-room-recent-list"></div>
+            </div>
+            <label class="plm-field">
+              <span class="plm-label">Código personalizado (opcional)</span>
+              <input type="text" class="plm-input" id="create-room-code" maxlength="20" placeholder="noitedejogos" autocomplete="off" spellcheck="false" autocapitalize="off" />
+              <span class="plm-hint">De 4 a 20 letras ou números. Em branco, o código é gerado.</span>
+            </label>
             <label class="plm-field">
               <span class="plm-label">Senha (opcional)</span>
               <input type="password" class="plm-input" id="create-room-password" maxlength="64" autocomplete="new-password" />

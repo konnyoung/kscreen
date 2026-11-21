@@ -75,6 +75,7 @@ aparelho na rede (o navegador só libera câmera, microfone e captura de tela em
 |---|---|
 | `SESSION_SECRET` | Assina o cookie de login. Sem ela, todo mundo é deslogado quando o servidor reinicia. Gere com `openssl rand -hex 32`. |
 | `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET` | Login com Discord. |
+| `DISCORD_BOT_TOKEN` | Opcional. Token do bot do mesmo app do Discord (aba **Bot**; não precisa estar em nenhum servidor). Com ele, quem troca a foto no Discord aparece com a foto nova no kScreen. |
 | `PUBLIC_URL` | Endereço público em produção (usado no redirect do Discord). |
 | `ADMIN_IDS` | IDs do Discord que podem abrir o painel admin. Vazio, ninguém abre. |
 | `GIPHY_API_KEY` | Busca de GIFs no chat. Chave grátis em [developers.giphy.com](https://developers.giphy.com/). |

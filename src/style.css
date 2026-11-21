@@ -2306,6 +2306,113 @@ video.mirror {
   color: var(--text-primary);
 }
 
+.plm-hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* "Nova sala": recent room settings. Same field as the limit's segmented control: rows
+   inside one dark field, the chosen one tinted with the accent like a checked segment. */
+.room-recent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(--plm-field);
+}
+.room-recent { position: relative; min-width: 0; }
+.room-recent-pick {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  height: 40px;
+  padding: 0 70px 0 12px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-primary);
+  font: 700 14px var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.room-recent-pick:hover { background: color-mix(in srgb, var(--text-primary) 5%, transparent); }
+.room-recent-pick.is-active { background: color-mix(in srgb, var(--accent) 30%, transparent); color: var(--accent); }
+.room-recent-pick:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.room-recent-icon { flex: none; display: grid; color: var(--text-secondary); }
+.room-recent-pick.is-active .room-recent-icon { color: inherit; }
+.room-recent-code {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+}
+.room-recent-code.is-generated { font-family: var(--font-ui); font-weight: 400; color: var(--text-secondary); }
+.room-recent-pick.is-active .room-recent-code.is-generated { color: inherit; }
+.room-recent-tags { flex: none; display: flex; align-items: center; gap: 6px; }
+.room-recent-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+  color: var(--text-secondary);
+  font: 700 12px var(--font-ui);
+}
+.room-recent-pick.is-active .room-recent-tag { background: color-mix(in srgb, var(--accent) 22%, transparent); color: inherit; }
+.room-recent.is-pinned .room-recent-icon { color: var(--accent); }
+/* Line between the pinned rooms and the recent ones. */
+.room-recent.is-pinned + .room-recent:not(.is-pinned) { margin-top: 5px; }
+.room-recent.is-pinned + .room-recent:not(.is-pinned)::before {
+  content: '';
+  position: absolute;
+  top: -4px;
+  left: 8px;
+  right: 8px;
+  height: 1px;
+  background: var(--plm-line);
+}
+.room-recent-actions {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  display: flex;
+  gap: 2px;
+  transform: translateY(-50%);
+}
+.room-recent-action {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+.room-recent:hover .room-recent-action,
+.room-recent-action:focus-visible { opacity: 1; }
+.room-recent-action:hover:not(:disabled) { background: color-mix(in srgb, var(--text-primary) 10%, transparent); color: var(--text-primary); }
+.room-recent-action[aria-pressed="true"] { color: var(--accent); }
+.room-recent-action:disabled { cursor: not-allowed; }
+.room-recent:hover .room-recent-action:disabled { opacity: 0.35; }
+.room-recent-action:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+@media (hover: none) {
+  .room-recent-action { opacity: 1; }
+  .room-recent-action:disabled { opacity: 0.35; }
+}
+
 .plm-code {
   font-family: var(--font-mono);
   color: var(--text-secondary);
@@ -2501,6 +2608,12 @@ video.mirror {
 .watch-stream-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .grid-participant-card .watch-stream-btn { height: 34px; padding: 0 14px; font-size: 13px; }
+
+/* A watched stream whose video isn't here yet (connecting, P2P -> SFU): spinner over the last
+   still frame instead of the button. */
+.stream-cover .io-spinner { display: none; position: relative; }
+.stream-cover.is-connecting .io-spinner { display: inline-block; }
+.stream-cover.is-connecting .watch-stream-btn { display: none; }
 
 /* A watched stream that ended: black card, message and "Fechar" (Discord). */
 .stream-ended {

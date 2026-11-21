@@ -411,6 +411,8 @@ export class P2PEngine {
     this.onReplaced = options.onReplaced || (() => {});
     this.myAvatarUrl = options.avatarUrl || '/avatar.png';
     this.activeRoomId = null;
+    // True only once the server accepted the join (activeRoomId is set while still trying).
+    this.roomJoined = false;
     this.session = null;
     this.localStream = null;
     this.micStream = null;
@@ -502,13 +504,15 @@ export class P2PEngine {
   // --- ROOM LIFECYCLE ---
 
   // password: only for rooms created with one. Kept for automatic re-joins.
-  async joinRoom(roomId, peerName = this.myPeerName, avatarUrl = this.myAvatarUrl, { password = '' } = {}) {
+  // fresh: a typed code or invite link; the server answers ROOM_NOT_FOUND instead of creating it.
+  async joinRoom(roomId, peerName = this.myPeerName, avatarUrl = this.myAvatarUrl, { password = '', fresh = false } = {}) {
     this.disconnect({ quiet: true });
 
     const cleanRoomId = String(roomId || '').trim();
     if (!cleanRoomId) throw new Error('Código de sala inválido');
     this.roomPassword = password;
     this.roomMaxPeers = 0; // learned from the join reply
+    this.joinFresh = fresh; // only the first register; re-joins after a restart recreate the room
 
     this.myPeerName = peerName || 'Você';
     this.myAvatarUrl = avatarUrl || '/avatar.png';
@@ -523,6 +527,7 @@ export class P2PEngine {
       const data = await this.register();
       if (this.session !== session) return cleanRoomId;
       this.activeRoomId = data.roomId || cleanRoomId;
+      this.roomJoined = true;
       this.roomLocked = !!data.locked;
       this.log(`Conectado à sala ${this.activeRoomId}. Participantes: ${data.existingPeers.length + 1}`, 'success');
       this.syncRoster(data.existingPeers, true);
@@ -538,12 +543,12 @@ export class P2PEngine {
     return this.activeRoomId;
   }
 
-  async createRoom(peerName = this.myPeerName, avatarUrl = this.myAvatarUrl, { password = '', maxPeers = 0 } = {}) {
+  async createRoom(peerName = this.myPeerName, avatarUrl = this.myAvatarUrl, { password = '', maxPeers = 0, code = '' } = {}) {
     this.log(password ? 'Gerando nova sala com senha...' : 'Gerando nova sala...');
     const res = await fetch('/api/room/create', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...this.joinExtras(), ...(password ? { password } : {}), ...(maxPeers ? { maxPeers } : {}) })
+      body: JSON.stringify({ ...this.joinExtras(), ...(password ? { password } : {}), ...(maxPeers ? { maxPeers } : {}), ...(code ? { code } : {}) })
     });
     if (res.status === 401) {
       this.onAuthRequired();
@@ -551,7 +556,7 @@ export class P2PEngine {
     }
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'Servidor de sinalização indisponível.');
+      throw Object.assign(new Error(err.error || 'Servidor de sinalização indisponível.'), { status: res.status, code: err.code });
     }
     const { roomId } = await res.json();
     return this.joinRoom(roomId, peerName, avatarUrl, { password });
@@ -582,6 +587,7 @@ export class P2PEngine {
         ...(this.netString() ? { net: this.netString() } : {}),
         ...this.joinExtras(),
         ...(this.roomPassword ? { password: this.roomPassword } : {}),
+        ...(this.joinFresh ? { fresh: true } : {}),
         // After a server restart the room is recreated by whoever re-joins first: password and
         // people limit come back with it.
         ...(this.roomMaxPeers ? { maxPeers: this.roomMaxPeers } : {})
@@ -594,6 +600,7 @@ export class P2PEngine {
       throw Object.assign(new Error(err.error || 'Falha ao registrar na sala.'), { status: res.status, code: err.code });
     }
     const data = await res.json();
+    this.joinFresh = false;
     if (data.maxPeers) this.roomMaxPeers = data.maxPeers;
     // The server may have lost what we told it (restart): send everything again.
     this.lastStateJson = '';
@@ -1466,7 +1473,9 @@ export class P2PEngine {
     channel.onopen = () => {
       // Capabilities for new features (see docs/webrtc-regras.md, rule 2). No relayLink: the
       // chat-media TURN link is gone, so older pages never try to open one with us.
-      this.sendTo(peer, { type: 'caps' });
+      // handoff: when the room moves P2P -> SFU we keep this connection until both sides see each
+      // other through the media server (see sfu-engine.js, sfuHandoffCheck).
+      this.sendTo(peer, { type: 'caps', handoff: true });
       this.sendTo(peer, { type: 'screen_status', streaming: !!this.localStream, hasAudio: !!this.localStream?.getAudioTracks().length });
       this.sendTo(peer, this.voiceState());
       this.sendTo(peer, { type: 'watching', ids: [...this.watching] });
@@ -1480,31 +1489,50 @@ export class P2PEngine {
         return;
       }
       if (msg.type === 'caps') {
-        // Nothing to negotiate yet.
-      } else if (msg.type === 'ping') {
+        peer.canHandoff = !!msg.handoff;
+        return;
+      }
+      if (msg.type === 'handoff_ready') {
+        peer.handoffPeerReady = true;
+        this.meshHandoffReady(peer);
+        return;
+      }
+      // P2P -> SFU handoff: this old connection still carries their messages until it closes, but
+      // the person on screen is already the media-server one (peer.handoffTo).
+      const to = this.handoffTarget(peer);
+      if (msg.type === 'ping') {
         this.sendTo(peer, { type: 'pong', timestamp: msg.timestamp });
       } else if (msg.type === 'pong') {
-        if (typeof msg.timestamp === 'number') peer.stats.pingMs = Math.max(1, Math.round(performance.now() - msg.timestamp));
+        if (typeof msg.timestamp === 'number') to.stats.pingMs = Math.max(1, Math.round(performance.now() - msg.timestamp));
       } else if (msg.type === 'voice_state') {
-        this.applyVoiceState(peer, msg);
+        this.applyVoiceState(to, msg);
       } else if (msg.type === 'screen_status') {
-        this.applyScreenStatus(peer, !!msg.streaming);
+        this.applyScreenStatus(to, !!msg.streaming);
       } else if (msg.type === 'watching') {
-        this.applyWatching(peer, msg.ids);
+        this.applyWatching(to, msg.ids);
       } else if (msg.type === 'preview') {
         const image = msg.image;
-        if (peer.isStreaming && typeof image === 'string' && image.length < 400_000 && image.startsWith('data:image/jpeg;base64,')) {
-          peer.preview = image;
+        if (to.isStreaming && typeof image === 'string' && image.length < 400_000 && image.startsWith('data:image/jpeg;base64,')) {
+          to.preview = image;
           this.notifyPeersUpdate();
         }
       } else if (msg.type === 'bye') {
-        this.markDeparted(peer.id);
-        this.removePeer(peer.id);
+        this.markDeparted(to.id);
+        this.removePeer(to.id);
       } else {
-        this.onPeerMessage({ fromPeerId: peer.id, fromName: peer.name, message: msg });
+        this.onPeerMessage({ fromPeerId: to.id, fromName: to.name, message: msg });
       }
     };
   }
+
+  // P2P -> SFU handoff hooks (see sfu-engine.js): the peer that should get messages arriving on an
+  // old P2P channel, and the other side saying it sees us through the media server.
+  handoffTarget(peer) {
+    const next = peer.handoffTo;
+    return next && this.peers.get(peer.id) === next ? next : peer;
+  }
+
+  meshHandoffReady() {}
 
   applyVoiceState(peer, msg) {
     peer.micMuted = !!msg.micMuted;
@@ -2399,6 +2427,7 @@ export class P2PEngine {
     this.orphanedCandidates.clear();
     this.outbox.clear();
     this.activeRoomId = null;
+    this.roomJoined = false;
     this.setStatus('closed');
     this.notifyPeersUpdate();
     if (wasInRoom && !quiet) this.log('Desconectado da sala.');
