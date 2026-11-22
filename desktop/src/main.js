@@ -39,9 +39,13 @@ app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 // Linux: GPU video encoding (VA-API) and PipeWire screen capture; native Wayland when available.
 if (platform.chromiumFeatures?.length) app.commandLine.appendSwitch('enable-features', platform.chromiumFeatures.join(','));
 if (process.platform === 'linux') app.commandLine.appendSwitch('ozone-platform-hint', 'auto');
+// The mic's automatic gain control must stay inside the audio pipeline: without this, Chromium's
+// AGC moves the system input volume (PulseAudio/PipeWire source, Windows mic level) up and down.
+// kScreen's own input volume is the gain node in webrtc.js (openMic).
+app.commandLine.appendSwitch('disable-features', 'WebRtcAllowInputVolumeAdjustment');
 for (const [name, value] of platform.chromiumSwitches || []) {
-  // enable-features is a single switch: join with the list above instead of replacing it.
-  if (name === 'enable-features' && app.commandLine.hasSwitch(name)) {
+  // enable-/disable-features are single switches: join with the lists above instead of replacing them.
+  if ((name === 'enable-features' || name === 'disable-features') && app.commandLine.hasSwitch(name)) {
     app.commandLine.appendSwitch(name, `${app.commandLine.getSwitchValue(name)},${value}`);
   } else if (value === undefined) {
     app.commandLine.appendSwitch(name);
@@ -49,10 +53,6 @@ for (const [name, value] of platform.chromiumSwitches || []) {
     app.commandLine.appendSwitch(name, value);
   }
 }
-// The mic's automatic gain control must stay inside the audio pipeline: without this, Chromium's
-// AGC moves the system input volume (PulseAudio/PipeWire source, Windows mic level) up and down.
-// kScreen's own input volume is the gain node in webrtc.js (openMic).
-app.commandLine.appendSwitch('disable-features', 'WebRtcAllowInputVolumeAdjustment');
 
 // ---------------------------------------------------------------------------
 // Settings (userData/settings.json)

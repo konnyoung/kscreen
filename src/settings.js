@@ -887,19 +887,16 @@ export function initSettings(api) {
     if (api.replay?.available()) box.append(replayBlock(api.replay, s.isLive()));
   }
 
-  // "Recording on the GPU": live status and, when it records on the processor, what to install
-  // for this distro and GPU (built by the app from each distro's docs: platform/linux.js).
+  // Shown only when clips can't be encoded on the GPU: the problem and what to install for this
+  // distro and GPU (built by the app from each distro's docs: platform/linux.js). With a GPU
+  // encoder (or while it's still being checked) nothing is shown.
   function gpuBlock(r) {
-    const hw = r.hwEncoder();
-    if (hw === null) return null;
+    if (r.hwEncoder() !== false) return null;
     const guide = r.gpuGuide();
     const rows = [h('div', { class: 'set-row', 'data-search': 'placa vídeo gpu encoder vaapi driver processador' },
       h('span', { class: 'set-row-text' },
-        h('span', { class: 'set-row-label' }, 'Gravar pela placa de vídeo'),
-        h('span', { class: `set-row-hint ${hw ? '' : 'set-warn-text'}` }, hw
-          ? 'Disponível: os clipes são gravados pela placa de vídeo.'
-          : 'Não disponível: os clipes são gravados pelo processador, em até 720p a 30 FPS.')))];
-    if (hw) return h('div', {}, rows);
+        h('span', { class: 'set-row-label' }, 'Gravando pelo processador'),
+        h('span', { class: 'set-row-hint set-warn-text' }, 'Sem encoder de vídeo na placa: os clipes são gravados pelo processador, em até 720p a 30 FPS.')))];
     if (!guide) {
       rows.push(note('Atualize o driver da sua placa de vídeo para gravar pela placa.'));
       return h('div', {}, rows);

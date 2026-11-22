@@ -167,6 +167,11 @@ const SOURCES = {
   packman: { name: 'openSUSE: codecs do Packman', url: 'https://en.opensuse.org/SDB:Installing_codecs_from_Packman_repositories' }
 };
 
+// Whether a Flatpak runtime/extension ref is installed (user or system), asked on the host.
+async function hasFlatpakRef(ref) {
+  return (await run('flatpak', ['info', ref])) !== null;
+}
+
 // Whether a package is installed on the host (null: can't tell).
 async function hasHostPackage(manager, name) {
   const args = { rpm: ['-q', name], pacman: ['-Q', name], dpkg: ['-W', '-f=${Status}', name] }[manager];
@@ -196,10 +201,11 @@ async function gpuGuide(vendorId, deps = {}) {
     const branch = deps.runtimeBranch || flatpakRuntimeBranch() || '24.08';
     // The 24.08 cycle named the branch "24.08extra" (no dash) by mistake; later ones use "-extra".
     const extra = branch === '24.08' ? '24.08extra' : `${branch}-extra`;
+    const installed = await (deps.hasFlatpakRef || hasFlatpakRef)(`org.freedesktop.Platform.GL.default//${extra}`);
     return {
       ...base,
       steps: [
-        { text: 'No Flatpak o driver de vídeo vem do runtime, não do sistema. Instale a versão "extra" do driver, que tem os codecs com patente (H.264):', cmd: `flatpak install flathub org.freedesktop.Platform.GL.default//${extra}` },
+        { text: 'No Flatpak o driver de vídeo vem do runtime, não do sistema. Instale a versão "extra" do driver, que tem os codecs com patente (H.264):', cmd: `flatpak install flathub org.freedesktop.Platform.GL.default//${extra}`, done: installed },
         restart
       ],
       sources: [SOURCES.flatpak]
@@ -240,8 +246,16 @@ async function gpuGuide(vendorId, deps = {}) {
 
 let ffmpegAac = null;
 
+// Hyprland 0.55+ can be configured in Lua (hyprland.lua) instead of hyprland.conf. Checked on
+// the host: inside the Flatpak the user's ~/.config is not visible.
+async function hyprlandConfigFile() {
+  const out = await run('sh', ['-c', 'd="${XDG_CONFIG_HOME:-$HOME/.config}/hypr"; if [ -f "$d/hyprland.conf" ]; then echo conf; elif [ -f "$d/hyprland.lua" ]; then echo lua; else echo none; fi']);
+  return out?.trim() === 'lua' ? 'hyprland.lua' : 'hyprland.conf';
+}
+
 const clips = {
   inFlatpak,
+  hyprlandConfigFile,
   // The command a system shortcut should run (Wayland without a shortcuts portal).
   saveClipCommand: inFlatpak ? `flatpak run ${process.env.FLATPAK_ID || 'br.com.kennyy.kscreen'} --save-clip` : 'kscreen --save-clip',
 
@@ -283,9 +297,12 @@ module.exports = {
   // (Flatpak: the VA drivers come from the runtime and often don't match the host GPU); Chromium
   // decodes small videos in software anyway, which is why 480p always worked. H.264 1080p60 in
   // software is light for any recent CPU. KSCREEN_HW_DECODE=1 turns GPU decoding back on.
+  // Only the VA-API *decoders* are turned off: --disable-accelerated-video-decode (used before)
+  // shuts VA-API down entirely, encoder included, so the share and the Instant Replay were
+  // encoded on the CPU too (measured in the Flatpak: encoder present without it, gone with it).
   chromiumSwitches: process.env.KSCREEN_HW_DECODE === '1'
     ? [['enable-features', 'VaapiVideoDecoder,VaapiVideoDecodeLinuxGL']]
-    : [['disable-accelerated-video-decode']],
+    : [['disable-features', 'VaapiVideoDecoder,VaapiVideoDecodeLinuxGL,AcceleratedVideoDecodeLinuxGL,AcceleratedVideoDecodeLinuxZeroCopyGL']],
 
   audio: {
     supported() {

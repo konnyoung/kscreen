@@ -6,12 +6,12 @@
 // flatpak-builder needs to create its own sandboxes, so the container runs --privileged, and the
 // first build downloads the Freedesktop runtime/SDK and the Electron base app from Flathub
 // (cached in the kscreen-flatpak volume for the next builds).
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawnSync } = require('node:child_process');
 const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
 const out = path.join(root, 'release');
-const image = process.env.KSCREEN_BUILDER_IMAGE || 'electronuserland/builder:20';
+const image = process.env.KSCREEN_BUILDER_IMAGE || 'docker.io/electronuserland/builder:20';
 
 const script = [
   'set -e',
@@ -24,10 +24,20 @@ const script = [
   'chmod a+rw /out/*'
 ].join(' && ');
 
-execFileSync('docker', [
+// Docker, or Podman where there is no Docker (Fedora). KSCREEN_CONTAINER picks one explicitly.
+// Rootless Podman on Fedora builds the AppImage, but flatpak-builder fails there ("fsetxattr
+// security.selinux: Operation not supported"). Then build the Flatpak on the host instead, with
+// flatpak-builder (dnf) or Flathub's org.flatpak.Builder behind a `flatpak-builder` wrapper
+// script on PATH: `npx electron-builder --linux flatpak` in a Linux checkout of this folder.
+const engine = process.env.KSCREEN_CONTAINER
+  || (spawnSync('docker', ['--version']).status === 0 ? 'docker' : 'podman');
+// SELinux (Fedora): the container may only read volumes relabeled for it.
+const label = engine === 'podman' ? ',z' : '';
+
+execFileSync(engine, [
   'run', '--rm', '--privileged',
-  '-v', `${root}:/src:ro`,
-  '-v', `${out}:/out`,
+  '-v', `${root}:/src:ro${label}`,
+  '-v', `${out}:/out${label ? ':z' : ''}`,
   '-v', 'kscreen-flatpak:/root/.local/share/flatpak',
   '-e', 'ELECTRON_CACHE=/root/.cache/electron',
   '-e', 'ELECTRON_BUILDER_CACHE=/root/.cache/electron-builder',

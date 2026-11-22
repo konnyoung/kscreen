@@ -115,7 +115,7 @@ module.exports = function initReplay({ isAppUrl, platform, audioExclude = () => 
       wayland: isWayland(),
       // How the shortcut is registered: 'portal' (Wayland: the system owns the key) or
       // 'electron'. On Hyprland the key is bound in hyprland.conf with `bindLine`.
-      shortcut: shortcutInfo(),
+      shortcut: await shortcutInfo(),
       // 'native' (Windows: the encoder has AAC), 'ffmpeg' (Linux: Opus re-encoded to AAC after
       // saving) or 'none' (Linux without ffmpeg: clips keep Opus audio).
       aac,
@@ -233,7 +233,7 @@ module.exports = function initReplay({ isAppUrl, platform, audioExclude = () => 
     : null;
   let portalBound = null; // Promise<{ ok, trigger, error }>
 
-  function shortcutInfo() {
+  async function shortcutInfo() {
     if (!portal) return { via: 'electron' };
     const desktop = String(process.env.XDG_CURRENT_DESKTOP || '').split(':')[0];
     const keys = settings.hotkey.split('+');
@@ -241,11 +241,12 @@ module.exports = function initReplay({ isAppUrl, platform, audioExclude = () => 
     const mods = keys.map(k => ({ ctrl: 'CTRL', alt: 'ALT', shift: 'SHIFT', super: 'SUPER' }[k.toLowerCase()] || k.toUpperCase()));
     const id = `${APP_ID}:${SHORTCUT_ID}`;
     // Hyprland 0.55+ can be configured in Lua (hyprland.lua) instead of hyprland.conf.
-    const lua = desktop === 'Hyprland' && hyprlandUsesLua();
+    const configFile = desktop === 'Hyprland' ? await (platform.clips?.hyprlandConfigFile?.() || hyprlandConfigFile()) : null;
+    const lua = configFile === 'hyprland.lua';
     const bindLine = desktop !== 'Hyprland' ? null
       : lua ? `hl.bind("${[...mods, key].join(' + ')}", hl.dsp.global("${id}"))`
         : `bind = ${mods.join(' ')}, ${key}, global, ${id}`;
-    return { via: 'portal', desktop, id, ...(bindLine ? { bindLine, configFile: lua ? 'hyprland.lua' : 'hyprland.conf' } : {}) };
+    return { via: 'portal', desktop, id, ...(bindLine ? { bindLine, configFile } : {}) };
   }
 
   function unregisterHotkey() {
@@ -463,9 +464,11 @@ module.exports = function initReplay({ isAppUrl, platform, audioExclude = () => 
   };
 };
 
-function hyprlandUsesLua() {
+// Fallback when the platform module has no check of its own (tests): this process's view.
+async function hyprlandConfigFile() {
   const base = process.env.XDG_CONFIG_HOME || path.join(require('node:os').homedir(), '.config');
-  return fs.existsSync(path.join(base, 'hypr', 'hyprland.lua')) && !fs.existsSync(path.join(base, 'hypr', 'hyprland.conf'));
+  const lua = fs.existsSync(path.join(base, 'hypr', 'hyprland.lua')) && !fs.existsSync(path.join(base, 'hypr', 'hyprland.conf'));
+  return lua ? 'hyprland.lua' : 'hyprland.conf';
 }
 
 const isWayland = () => process.platform === 'linux' && (process.env.XDG_SESSION_TYPE === 'wayland' || !!process.env.WAYLAND_DISPLAY);

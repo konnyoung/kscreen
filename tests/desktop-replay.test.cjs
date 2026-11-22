@@ -469,8 +469,11 @@ test('gpu guide: per distro and GPU, from each distro\'s documentation', async (
   assert.equal(nvidia.steps.length, 0);
 
   // Flatpak: the runtime's "extra" GL driver; 24.08 named its branch without the dash.
-  assert.equal(cmds(await g(0x1002, { id: 'fedora' }, { flatpak: true, runtimeBranch: '24.08' }))[0], 'flatpak install flathub org.freedesktop.Platform.GL.default//24.08extra');
-  assert.equal(cmds(await g(0x1002, { id: 'fedora' }, { flatpak: true, runtimeBranch: '25.08' }))[0], 'flatpak install flathub org.freedesktop.Platform.GL.default//25.08-extra');
+  const noRef = async () => false;
+  assert.equal(cmds(await g(0x1002, { id: 'fedora' }, { flatpak: true, runtimeBranch: '24.08', hasFlatpakRef: noRef }))[0], 'flatpak install flathub org.freedesktop.Platform.GL.default//24.08extra');
+  assert.equal(cmds(await g(0x1002, { id: 'fedora' }, { flatpak: true, runtimeBranch: '25.08', hasFlatpakRef: noRef }))[0], 'flatpak install flathub org.freedesktop.Platform.GL.default//25.08-extra');
+  const withExtra = await g(0x1002, { id: 'fedora' }, { flatpak: true, runtimeBranch: '24.08', hasFlatpakRef: async (ref) => ref.endsWith('24.08extra') });
+  assert.equal(withExtra.steps[0].done, true);
 
   const other = await g(0x1002, { id: 'gentoo' });
   assert.ok(other.note);
