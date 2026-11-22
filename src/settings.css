@@ -25,7 +25,8 @@
   height: min(860px, calc(100dvh - 48px));
   display: grid;
   grid-template-columns: 272px minmax(0, 1fr);
-  overflow: hidden;
+  /* clip, not hidden: a hidden box can still be scrolled by focus, shifting the whole window. */
+  overflow: clip;
   background: var(--set-main);
   border: 1px solid var(--border);
   border-radius: var(--radius-xl);
@@ -269,6 +270,9 @@
 .set-row + .set-row { border-top: 1px solid var(--set-line); }
 .set-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .set-row-label { font-size: 15px; font-weight: 600; }
+/* The hidden inputs are absolute: their own row must hold them, or they sit outside the scroll
+   area and focusing one (a click on its label) scrolls the whole settings window instead. */
+.set-switch, .set-radio { position: relative; }
 .set-switch { cursor: pointer; }
 .set-switch input,
 .set-radio input,
@@ -277,6 +281,25 @@
 .set-switch input:focus-visible ~ .k-switch { outline: 2px solid var(--accent); outline-offset: 2px; }
 .set-hidden-soft { display: none !important; }
 
+/* Instant Replay: what to install to record on the GPU */
+.set-steps { margin: 4px 0 8px; padding-left: 22px; display: flex; flex-direction: column; gap: 10px; font-size: 13px; }
+.set-steps li.done { opacity: 0.6; }
+.set-step-done { margin-left: 8px; font-size: 12px; font-weight: 600; color: var(--success, #3ba55c); }
+.set-cmd { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.set-cmd .set-code { flex: 1; min-width: 0; margin-top: 0; }
+.set-sources a { color: inherit; text-decoration: underline; }
+.set-warn-text { color: var(--warning, #f0b232); }
+/* A line to copy into a config file (Instant Replay on Hyprland) */
+.set-code {
+  display: block;
+  margin-top: 6px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
 .set-note {
   margin: 14px 0 0;
   padding: 10px 14px;

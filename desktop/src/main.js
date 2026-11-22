@@ -682,6 +682,10 @@ app.on('will-quit', () => {
   for (const id of [...audioCaptures.keys()]) stopSystemAudio(id);
 });
 
+// Instant Replay (replay.js): the "replay" capability the site checks through preload.js, the
+// clip files and the global shortcut.
+const replay = require('./replay')({ isAppUrl, platform, audioExclude: audioExcludeList });
+
 // ---------------------------------------------------------------------------
 // Permissions: only our site gets camera/mic/screen/notifications
 // ---------------------------------------------------------------------------
@@ -947,8 +951,19 @@ async function tuneHybridGpu() {
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
+} else if (process.argv.includes('--save-clip')) {
+  // `kscreen --save-clip` with no kScreen open: there is no replay to save, and a system
+  // shortcut must not open the app.
+  console.log('[replay] --save-clip: o kScreen não está aberto');
+  app.quit();
 } else {
   app.on('second-instance', (_event, argv) => {
+    // `kscreen --save-clip`: saves an Instant Replay clip without touching the window (bound to
+    // a system shortcut on Wayland, where apps can't have global keys of their own).
+    if (argv.includes('--save-clip')) {
+      if (!replay.saveClip()) console.log('[replay] --save-clip: o Instant Replay não está ativo');
+      return;
+    }
     const room = roomFromDeepLink(argv.find(a => a.startsWith(`${PROTOCOL}://`)));
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();

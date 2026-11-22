@@ -351,6 +351,18 @@ export class KScreenEngine extends P2PEngine {
     return muted;
   }
 
+  async openMicMuted() {
+    const stream = await super.openMicMuted();
+    if (this.isSfu()) this.sfuSync();
+    return stream;
+  }
+
+  releaseMutedMic() {
+    const closed = super.releaseMutedMic();
+    if (closed && this.isSfu()) this.sfuSync();
+    return closed;
+  }
+
   useCameraStream(stream) {
     super.useCameraStream(stream);
     if (this.isSfu()) this.sfuSync();

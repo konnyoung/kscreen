@@ -132,7 +132,9 @@
         "--device=dri",
         "--device=all",
         "--filesystem=xdg-download",
+        "--filesystem=xdg-videos/kScreen:create",
         "--talk-name=org.freedesktop.Notifications",
+        "--talk-name=org.freedesktop.FileManager1",
         "--talk-name=org.freedesktop.Flatpak"
       ]
     },

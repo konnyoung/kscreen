@@ -398,6 +398,34 @@ const engine = new KScreenEngine({
 // Dev server only: lets tests and the console inspect the engine.
 if (import.meta.env.DEV) window.kscreenEngine = engine;
 
+// Instant Replay (src/replay.js): the last seconds of your own share, saved as MP4 by a button
+// in the live menu or a global shortcut. Desktop app only, same rule as above: no bridge (web)
+// or no 'replay' feature (older app) = the file isn't loaded and nothing is shown.
+let replay = null;
+let replayShown = '';
+function replayChanged() {
+  renderShareMenu();
+  // The settings page only shows these: redraw it when one of them changes, not on every save.
+  const s = replay?.settings || {};
+  const shown = JSON.stringify([s.enabled, s.seconds, s.hotkey, s.mic, s.micAlways, s.micMode, s.pcAudio, s.voices, replay?.active, replay?.hotkeyRegistered, replay?.hotkeyTrigger, replay?.hwEncoder, replay?.lastError]);
+  if (shown === replayShown) return;
+  replayShown = shown;
+  try { settings.refresh('share'); } catch { /* settings not built yet */ }
+}
+if (window.kscreenDesktop?.replay) {
+  import('./replay.js')
+    .then(m => m.initReplay(engine, {
+      onChange: replayChanged,
+      toast: (message, duration, options) => showToast(message, duration, options),
+      // Like other clip tools: a short sound when a clip is saved (Sons → Clipes).
+      onSaved: () => playSound('clip'),
+      // "Record the room's voices": what you hear of the others, with your own volumes.
+      roomVoices: roomVoicesTrack
+    }))
+    .then((r) => { replay = r; replayChanged(); })
+    .catch(err => console.warn('[replay]', err));
+}
+
 // Room text chat (src/chat.js). Messages go through the server, so they reach everyone
 // even when a P2P link failed, and people who join later see the history.
 const btnDockChat = $('btn-dock-chat');
@@ -1025,12 +1053,21 @@ function joinFromUrl() {
 // TOAST NOTIFICATIONS
 // ==========================================================================
 
-function showToast(message, duration = 3200) {
+// options.onClick: the toast becomes a button (e.g. "show the clip in its folder").
+function showToast(message, duration = 3200, options = {}) {
   if (!toastContainer) return;
   const toast = document.createElement('div');
   toast.className = 'toast';
   toast.setAttribute('role', 'status');
   toast.textContent = message;
+  if (typeof options.onClick === 'function') {
+    toast.classList.add('toast-action');
+    toast.tabIndex = 0;
+    if (options.title) toast.title = options.title;
+    const run = () => { options.onClick(); toast.remove(); };
+    toast.addEventListener('click', run);
+    toast.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); run(); } });
+  }
   toastContainer.appendChild(toast);
   while (toastContainer.children.length > 3) toastContainer.firstChild.remove();
 
@@ -1279,7 +1316,9 @@ const SOUND_CUES = [
   { keys: ['mute', 'unmute'], label: 'Microfone', hint: 'Você liga ou desliga o microfone.' },
   { keys: ['deafen', 'undeafen'], label: 'Áudio da sala', hint: 'Você silencia ou ativa o áudio da sala.' },
   { keys: ['cameraOn', 'cameraOff'], label: 'Câmera', hint: 'Você liga ou desliga a câmera.' },
-  { keys: ['mention'], label: 'Menções no chat', hint: 'Alguém menciona você.' }
+  { keys: ['mention'], label: 'Menções no chat', hint: 'Alguém menciona você.' },
+  // Instant Replay exists only in the desktop app.
+  ...(window.kscreenDesktop?.replay ? [{ keys: ['clip'], label: 'Clipes', hint: 'Você salva um clipe do Instant Replay.' }] : [])
 ];
 
 const SOUNDS = {
@@ -1292,7 +1331,9 @@ const SOUNDS = {
   deafen: [[392, 0, 0.12], [262, 0.08, 0.18]],
   undeafen: [[262, 0, 0.12], [392, 0.08, 0.18]],
   message: [[784, 0, 0.07], [1047, 0.06, 0.12]],
-  mention: [[880, 0, 0.08], [1175, 0.07, 0.08], [1397, 0.14, 0.16]]
+  mention: [[880, 0, 0.08], [1175, 0.07, 0.08], [1397, 0.14, 0.16]],
+  // Like a camera shutter: two quick high notes.
+  clip: [[1319, 0, 0.06], [1760, 0.05, 0.12]]
 };
 
 // Cue name -> file in public/sfx.
@@ -2733,6 +2774,7 @@ function syncAudio(participants) {
       if (!ctx) continue;
       const gains = { voice: ctx.createGain(), stream: ctx.createGain() };
       for (const g of Object.values(gains)) g.connect(ctx.destination);
+      if (voiceBus?.context === ctx) gains.voice.connect(voiceBus);
       // One source per track: a MediaStreamAudioSourceNode only plays ONE track of
       // its stream, which silenced screen audio whenever the mic track was picked.
       const sources = tracks.map(track => {
@@ -2755,6 +2797,20 @@ function syncAudio(participants) {
     if (!active.has(id)) removeAudioPipeline(id);
   }
   updateAudioUnlock();
+}
+
+// Instant Replay's "room voices" track: every voice as you hear it (your volumes, deafen
+// included), summed on a bus next to the speakers. Made on first use, then kept.
+let voiceBus = null;
+function roomVoicesTrack() {
+  const ctx = getAudioContext();
+  if (!ctx) return null;
+  if (voiceBus?.context !== ctx) {
+    voiceBus = ctx.createMediaStreamDestination();
+    voiceBus.channelCount = 2;
+    for (const pipeline of audioPipelines.values()) pipeline.gains.voice.connect(voiceBus);
+  }
+  return voiceBus.stream.getAudioTracks()[0] || null;
 }
 
 function removeAudioPipeline(peerId) {
@@ -3165,6 +3221,7 @@ function handleLocalStream(stream) {
   // The capture reports its real size only after the first frames.
   setTimeout(renderShareMenu, 1500);
   renderStage();
+  replay?.shareStarted();
 }
 
 function handleLocalShareEnded() {
@@ -3175,6 +3232,7 @@ function handleLocalShareEnded() {
   if (btnDockScreenshare) btnDockScreenshare.title = 'Compartilhar tela';
   btnShareMenu?.classList.add('hidden');
   localStreamShown = null;
+  replay?.shareEnded();
   toggleShareMenu(false);
   renderShareMenu();
   if (engine.activeRoomId) {
@@ -3874,11 +3932,19 @@ function renderShareMenu() {
   shareMenuAudioRow.title = hasAudio ? '' : 'Esta transmissão não tem áudio';
   const track = localStream?.getVideoTracks()[0];
   const actual = track?.getSettings() || {};
-  shareMenuStatus.textContent = engine.capturePaused
+  const quality = engine.capturePaused
     ? 'Pausado: o jogo não está em primeiro plano'
     : track && actual.height
       ? `${actual.width}×${actual.height} · ${fps} FPS`
       : `${SHARE_RESOLUTIONS[resolution].label} · ${fps} FPS`;
+  // Instant Replay: the save item and a discreet "replay on" note while its buffer runs.
+  const clip = $('share-menu-clip');
+  const replayOn = !!replay?.active;
+  clip?.classList.toggle('hidden', !replayOn);
+  if (clip) clip.disabled = !!replay?.busy;
+  if (replayOn) $('share-menu-clip-label').textContent = replay.busy ? tr('Salvando clipe...') : tr(`Salvar clipe (últimos ${replay.settings.seconds} s)`);
+  const key = replay?.hotkeyLabel;
+  shareMenuStatus.textContent = replayOn ? `${quality} · ${tr(key ? `Replay ativo (${key})` : 'Replay ativo')}` : quality;
 }
 
 function placeShareMenu() {
@@ -3943,6 +4009,11 @@ if (shareMenu) {
   $('share-menu-stop').addEventListener('click', () => {
     toggleShareMenu(false);
     engine.stopScreenShare();
+  });
+
+  $('share-menu-clip')?.addEventListener('click', () => {
+    toggleShareMenu(false);
+    replay?.save();
   });
 
   $('share-menu-switch').addEventListener('click', async () => {
@@ -4941,6 +5012,26 @@ const settings = initSettings({
       showToast(now ? 'Áudio da transmissão ativado.' : 'Áudio da transmissão silenciado.');
       renderShareMenu();
     }
+  },
+  // Instant Replay (desktop app only): null in the browser, so the section doesn't show it.
+  replay: {
+    available: () => !!replay,
+    get: () => replay?.settings || null,
+    set: (patch) => replay?.setSettings(patch),
+    durations: () => replay?.DURATIONS || [],
+    hotkeys: () => replay?.HOTKEYS || [],
+    active: () => !!replay?.active,
+    hotkeyRegistered: () => !!replay?.hotkeyRegistered,
+    pcAudioAvailable: () => !!replay?.pcAudioAvailable,
+    wayland: () => !!replay?.wayland,
+    saveClipCommand: () => replay?.saveClipCommand || 'kscreen --save-clip',
+    shortcut: () => replay?.shortcut || { via: 'electron' },
+    hotkeyTrigger: () => replay?.hotkeyTrigger || '',
+    aacMissing: () => replay?.aac === 'none',
+    gpuGuide: () => replay?.gpuGuide || null,
+    hwEncoder: () => replay?.hwEncoder ?? null,
+    error: () => replay?.lastError || null,
+    openFolder: () => replay?.openFolder()
   },
   sounds: {
     CUES: SOUND_CUES,

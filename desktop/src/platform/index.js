@@ -9,6 +9,7 @@
 //   audio.listApps(selfPid)   Promise<[{ exe, name }]>: apps with sound, minus kScreen
 //   audio.start({ selfPid, exclude }) -> { stdout (PCM s16le 48k stereo), stop(), onExit(cb) }
 //   game                      Windows only: fullscreen windows captured via their monitor
+//   clips                     optional (Linux): Instant Replay helpers, see linux.js
 const none = {
   name: process.platform,
   capture: { systemPicker: false },

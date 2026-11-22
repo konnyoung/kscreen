@@ -118,7 +118,13 @@ async function linkStreams(sinkName, selfPid, exclude) {
   return added;
 }
 
-// Leftovers from a crash: sinks we created and never unloaded.
+// Leftovers from a crash: sinks we created and never unloaded. Done once per run: by then a
+// sink with our prefix can only be from an earlier run. Later captures (the share's and the
+// Instant Replay's can run side by side) must never remove each other's sink.
+let staleCleanup = null;
+const cleanStaleSinksOnce = () => (staleCleanup ??= unloadStaleSinks().catch(() => {}));
+let sinkSeq = 0;
+
 async function unloadStaleSinks() {
   const list = await run('pactl', ['list', 'short', 'modules']) || '';
   for (const line of list.split('\n')) {
@@ -127,8 +133,141 @@ async function unloadStaleSinks() {
   }
 }
 
+// ---- Instant Replay helpers ------------------------------------------------------------------
+
+// The host's /etc/os-release (inside the Flatpak the sandbox's own is the runtime's).
+function hostOs() {
+  for (const file of ['/run/host/os-release', '/etc/os-release']) {
+    try {
+      const text = fs.readFileSync(file, 'utf8');
+      const get = (k) => (new RegExp(`^${k}="?([^"\n]*)"?`, 'm').exec(text) || [])[1] || '';
+      return { id: get('ID'), like: get('ID_LIKE'), name: get('PRETTY_NAME') || get('NAME') };
+    } catch { /* next */ }
+  }
+  return { id: '', like: '', name: '' };
+}
+
+// The runtime branch of this Flatpak ("24.08"), from /.flatpak-info.
+function flatpakRuntimeBranch() {
+  try {
+    const m = /^runtime=runtime\/[^/]+\/[^/]+\/(\S+)$/m.exec(fs.readFileSync('/.flatpak-info', 'utf8'));
+    return m ? m[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+const VENDORS = { 0x1002: 'AMD', 0x8086: 'Intel', 0x10de: 'NVIDIA' };
+const SOURCES = {
+  rpmfusion: { name: 'RPM Fusion: Multimedia', url: 'https://rpmfusion.org/Howto/Multimedia' },
+  rpmfusionSetup: { name: 'RPM Fusion: Configuração', url: 'https://rpmfusion.org/Configuration' },
+  arch: { name: 'ArchWiki: Hardware video acceleration', url: 'https://wiki.archlinux.org/title/Hardware_video_acceleration' },
+  debian: { name: 'Debian Wiki: HardwareVideoAcceleration', url: 'https://wiki.debian.org/HardwareVideoAcceleration' },
+  flatpak: { name: 'Flathub: freedesktop-sdk 24.08', url: 'https://discourse.flathub.org/t/freedesktop-sdk-24-08-0-released/7630' },
+  packman: { name: 'openSUSE: codecs do Packman', url: 'https://en.opensuse.org/SDB:Installing_codecs_from_Packman_repositories' }
+};
+
+// Whether a package is installed on the host (null: can't tell).
+async function hasHostPackage(manager, name) {
+  const args = { rpm: ['-q', name], pacman: ['-Q', name], dpkg: ['-W', '-f=${Status}', name] }[manager];
+  const out = await run({ rpm: 'rpm', pacman: 'pacman', dpkg: 'dpkg-query' }[manager], args);
+  if (out === null) return false;
+  return manager === 'dpkg' ? out.includes('install ok installed') : true;
+}
+
+// What to install so Chromium can encode H.264 on the GPU (VA-API), for this distro and GPU,
+// following each distro's own documentation (SOURCES). Steps: [{ text, cmd?, done? }] (done:
+// the package is already there). The settings page shows it next to the live status.
+// deps: overrides for tests (os, flatpak, runtimeBranch, hasPackage).
+async function gpuGuide(vendorId, deps = {}) {
+  const vendor = VENDORS[vendorId] || null;
+  const os = deps.os || hostOs();
+  const inFlatpak = deps.flatpak ?? module.exports.clips.inFlatpak;
+  const hasPackage = deps.hasPackage || hasHostPackage;
+  const is = (name) => os.id === name || os.like.split(' ').includes(name);
+  const base = { distro: inFlatpak ? `Flatpak (${os.name || 'Linux'})` : os.name || 'Linux', vendor, steps: [], sources: [] };
+  const verify = (pkg) => ({ text: `Para conferir, instale o ${pkg} e rode o comando abaixo: na lista tem que aparecer VAProfileH264 com VAEntrypointEncSlice (ou EncSliceLP).`, cmd: 'vainfo' });
+  const restart = { text: 'Feche e abra o kScreen de novo.' };
+
+  if (vendor === 'NVIDIA') {
+    return { ...base, unsupported: true, note: 'Placas NVIDIA não têm encoder H.264 por VA-API no Linux (o driver nvidia-vaapi-driver só decodifica). O kScreen grava pelo processador, em até 720p a 30 FPS.', sources: [SOURCES.debian] };
+  }
+  if (inFlatpak) {
+    const branch = deps.runtimeBranch || flatpakRuntimeBranch() || '24.08';
+    // The 24.08 cycle named the branch "24.08extra" (no dash) by mistake; later ones use "-extra".
+    const extra = branch === '24.08' ? '24.08extra' : `${branch}-extra`;
+    return {
+      ...base,
+      steps: [
+        { text: 'No Flatpak o driver de vídeo vem do runtime, não do sistema. Instale a versão "extra" do driver, que tem os codecs com patente (H.264):', cmd: `flatpak install flathub org.freedesktop.Platform.GL.default//${extra}` },
+        restart
+      ],
+      sources: [SOURCES.flatpak]
+    };
+  }
+  if (is('fedora')) {
+    const enable = vendor === 'Intel'
+      ? { text: 'Ative os repositórios RPM Fusion (free e nonfree):', cmd: 'sudo dnf install https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm' }
+      : { text: 'Ative o repositório RPM Fusion free:', cmd: 'sudo dnf install https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm' };
+    const driver = vendor === 'Intel'
+      ? { text: 'Instale o driver de vídeo da Intel (placas de 2014 em diante; nas mais antigas, libva-intel-driver):', cmd: 'sudo dnf install intel-media-driver' }
+      : { text: 'O Mesa do Fedora vem sem o encoder H.264. Instale a versão do RPM Fusion:', cmd: 'sudo dnf install mesa-va-drivers-freeworld' };
+    const [repoOk, driverOk] = await Promise.all([
+      hasPackage('rpm', 'rpmfusion-free-release'),
+      hasPackage('rpm', vendor === 'Intel' ? 'intel-media-driver' : 'mesa-va-drivers-freeworld')
+    ]);
+    return { ...base, steps: [{ ...enable, done: repoOk }, { ...driver, done: driverOk }, restart, verify('libva-utils')], sources: [SOURCES.rpmfusion, SOURCES.rpmfusionSetup] };
+  }
+  if (is('arch')) {
+    const driver = vendor === 'Intel'
+      ? { text: 'Instale o driver de vídeo da Intel (placas de 2014 em diante; nas mais antigas, libva-intel-driver):', cmd: 'sudo pacman -S --needed intel-media-driver' }
+      : { text: 'No Arch o VA-API da AMD vem no próprio mesa. Confira se ele está instalado e atualizado:', cmd: 'sudo pacman -S --needed mesa' };
+    const driverOk = await hasPackage('pacman', vendor === 'Intel' ? 'intel-media-driver' : 'mesa');
+    return { ...base, steps: [{ ...driver, done: driverOk }, restart, verify('libva-utils')], sources: [SOURCES.arch] };
+  }
+  if (is('debian') || is('ubuntu')) {
+    const driver = vendor === 'Intel'
+      ? { text: is('ubuntu') ? 'Só o driver "non-free" da Intel codifica vídeo. Ele fica no repositório multiverse:' : 'Só o driver "non-free" da Intel codifica vídeo. Ative o componente non-free nas fontes do apt e instale:', cmd: 'sudo apt install intel-media-va-driver-non-free' }
+      : { text: 'Instale o driver VA-API do Mesa:', cmd: 'sudo apt install mesa-va-drivers' };
+    const driverOk = await hasPackage('dpkg', vendor === 'Intel' ? 'intel-media-va-driver-non-free' : 'mesa-va-drivers');
+    return { ...base, steps: [{ ...driver, done: driverOk }, restart, verify('vainfo')], sources: [SOURCES.debian] };
+  }
+  if (is('opensuse') || is('suse')) {
+    return { ...base, note: 'O Mesa oficial do openSUSE vem sem H.264. Para gravar pela placa é preciso o Mesa do repositório Packman (veja o guia abaixo).', steps: [restart, verify('libva-utils')], sources: [SOURCES.packman] };
+  }
+  return { ...base, note: 'Instale o driver VA-API da sua placa com suporte a H.264 (o nome do pacote muda de distro para distro).', steps: [restart, verify('libva-utils')], sources: [SOURCES.arch] };
+}
+
+let ffmpegAac = null;
+
+const clips = {
+  inFlatpak,
+  // The command a system shortcut should run (Wayland without a shortcuts portal).
+  saveClipCommand: inFlatpak ? `flatpak run ${process.env.FLATPAK_ID || 'br.com.kennyy.kscreen'} --save-clip` : 'kscreen --save-clip',
+
+  // Chromium on Linux has no AAC encoder, so clips come out with Opus audio, which phones,
+  // QuickTime and some editors don't play. The host's ffmpeg (Fedora's ffmpeg-free included)
+  // re-encodes just the audio to AAC after saving; the video is copied as is.
+  hasAacEncoder() {
+    ffmpegAac ??= run('ffmpeg', ['-hide_banner', '-encoders']).then(out => !!out && /^\s*A\S*\s+aac\s/m.test(out));
+    return ffmpegAac;
+  },
+
+  // Resolves to true when `output` was written. Same tracks, names and timing; audio as AAC.
+  toAac(input, output) {
+    return new Promise((resolve) => {
+      const [cmd, args] = hostCmd('ffmpeg', ['-v', 'error', '-nostdin', '-y', '-i', input, '-map', '0', '-c:v', 'copy',
+        '-c:a', 'aac', '-b:a', '160k', '-map_metadata', '0', '-movflags', '+faststart', '-f', 'mp4', output]);
+      execFile(cmd, args, { timeout: 180_000 }, (err) => resolve(!err));
+    });
+  },
+
+  gpuGuide
+};
+
 module.exports = {
   name: 'linux',
+  clips,
 
   capture: {
     // Wayland: only the system portal may pick a screen/window (Electron returns that one
@@ -137,7 +276,9 @@ module.exports = {
   },
 
   // GPU encoding through VA-API, and screen capture through PipeWire on Wayland.
-  chromiumFeatures: ['AcceleratedVideoEncoder', 'VaapiVideoEncoder', 'WebRTCPipeWireCapturer'],
+  // GlobalShortcutsPortal: on Wayland, Electron's global shortcuts (Instant Replay's "save clip")
+  // go through the desktop's shortcuts portal, where the desktop supports it (KDE, GNOME 48+).
+  chromiumFeatures: ['AcceleratedVideoEncoder', 'VaapiVideoEncoder', 'WebRTCPipeWireCapturer', 'GlobalShortcutsPortal'],
   // Decoding stays on the CPU. VA-API decoding showed a black screen for streams from 1080p up
   // (Flatpak: the VA drivers come from the runtime and often don't match the host GPU); Chromium
   // decodes small videos in software anyway, which is why 480p always worked. H.264 1080p60 in
@@ -168,7 +309,8 @@ module.exports = {
     },
 
     start({ selfPid, exclude }) {
-      const sinkName = `${SINK_PREFIX}_${process.pid}`;
+      // One sink per capture: the share and the Instant Replay may each have one.
+      const sinkName = `${SINK_PREFIX}_${process.pid}_${++sinkSeq}`;
       let moduleId = null;
       let recorder = null;
       let timer = null;
@@ -188,7 +330,7 @@ module.exports = {
       };
 
       (async () => {
-        await unloadStaleSinks();
+        await cleanStaleSinksOnce();
         const id = await run('pactl', ['load-module', 'module-null-sink', `sink_name=${sinkName}`,
           // Lowest priority: our sink must never become the system's default output.
           "sink_properties='device.description=kScreen priority.session=1 priority.driver=1'", 'rate=48000', 'channels=2', 'channel_map=front-left,front-right']);

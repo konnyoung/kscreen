@@ -48,6 +48,52 @@ e dos utilitários `pactl`/`parec`:
 
 Sem eles o app funciona normalmente, só sem o som do PC.
 
+## Instant Replay (clipes)
+
+Guarda na memória os últimos segundos da sua própria transmissão e salva como MP4 em
+`Vídeos/kScreen` (Configurações → Transmissão → Instant Replay). Só funciona no app, enquanto você
+transmite; nada fica gravado quando a transmissão para.
+
+| | Windows | Linux |
+|---|---|---|
+| Vídeo | H.264 pela GPU (Media Foundation) | H.264 pela GPU (VA-API); sem VA-API, pelo processador em até 720p30 |
+| Áudio no MP4 | AAC | AAC pelo `ffmpeg` do sistema depois de salvar; sem ffmpeg, Opus |
+| Som do PC | `kscreen-audio.exe` | PipeWire, numa saída virtual própria |
+| Atalho global | sim | X11: sim · Wayland: pelo portal `GlobalShortcuts` (KDE/GNOME 48+ perguntam a tecla; no Hyprland, um bind para `br.com.kennyy.kscreen:save-clip`) ou um atalho do sistema com `kscreen --save-clip` |
+
+`kscreen --save-clip` (no Flatpak, `flatpak run br.com.kennyy.kscreen --save-clip`) salva um
+clipe no app que já está aberto (sem abrir janela), para quem prefere um atalho do próprio
+sistema. Com o kScreen fechado ele não faz nada.
+
+No Linux:
+
+- **Encoder pela placa** = VA-API. Intel e AMD precisam do driver VA-API com H.264: no Fedora o
+  Mesa padrão vem sem ele (`mesa-va-drivers-freeworld`, do RPM Fusion); no Flatpak o driver vem
+  do runtime. NVIDIA não tem encoder VA-API: grava pelo processador. Quando cai no processador, o
+  app avisa e diz o que instalar na distribuição da pessoa. Se o encoder da placa quebrar no meio,
+  o replay passa para o processador em vez de parar.
+- **Áudio**: o Chromium do Linux não tem encoder AAC, então o clipe é gravado com Opus e o
+  `ffmpeg` do sistema (inclusive o `ffmpeg-free` do Fedora) troca só o áudio para AAC, copiando o
+  vídeo. Se o ffmpeg falhar, fica o clipe com Opus. Sem ffmpeg, as configurações avisam.
+
+- **Atalho no Wayland**: o `globalShortcut` do Electron diz que registrou mas nunca recebe a
+  tecla, então o app fala direto com o portal (`src/portal-shortcuts.js`, com um cliente D-Bus
+  próprio em `src/dbus-lite.js`, sem dependência nativa). No Hyprland a tecla é do usuário:
+  `bind = ALT, F10, global, br.com.kennyy.kscreen:save-clip` no `hyprland.conf`, ou
+  `hl.bind("ALT + F10", hl.dsp.global("br.com.kennyy.kscreen:save-clip"))` no `hyprland.lua`.
+  As configurações mostram a linha certa com um botão de copiar.
+- **Atalho**: `Alt+F10` por padrão. Enquanto o replay roda, a tecla escolhida não chega ao jogo
+  (por isso o padrão tem modificador). Segurar a tecla salva um clipe só.
+- **Áudio**: o som da transmissão, o microfone (opcional, até mutado) e as vozes da sala como você
+  ouve (opcional). Por padrão tudo numa faixa só, que toca em qualquer player; em "Separadas"
+  cada fonte vira uma faixa, para editores.
+- **Ao salvar**: um som (Sons → Clipes) e um aviso; clicar no aviso mostra o arquivo na pasta.
+- Redimensionar a janela transmitida mantém o que já foi gravado (o vídeo é escalado); trocar de
+  tela ou de janela começa um buffer novo.
+
+Testes: `npm test` na raiz (muxer, lógica do replay e lado do app). O teste com WebCodecs de
+verdade fica em `tests/browser/replay-e2e.html` (instruções no próprio arquivo).
+
 ## Login com Discord
 
 O Discord **nunca abre dentro do app**. Ao clicar em "Entrar com Discord":

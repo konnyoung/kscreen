@@ -1591,6 +1591,10 @@ html, body {
   text-align: center;
   transition: opacity 0.2s ease-out, transform 0.2s ease-out;
 }
+/* A toast that does something on click (Instant Replay: show the saved clip) */
+.toast.toast-action { cursor: pointer; }
+.toast.toast-action:hover,
+.toast.toast-action:focus-visible { background: rgba(36, 38, 44, 0.96); outline: none; }
 
 /* While a dock menu is open the menu wins: toasts slip under the dock layer instead of
    covering its rows */

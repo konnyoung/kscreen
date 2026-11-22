@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Instant Replay e2e</title>
+  <style>
+    body { font: 14px system-ui, sans-serif; background: #111; color: #eee; margin: 16px; }
+    canvas { width: 320px; border: 1px solid #444; }
+    pre { white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>Instant Replay: teste de ponta a ponta</h1>
+  <p>Aberto pelo servidor de dev (<code>npm run dev</code>): <code>/tests/browser/replay-e2e.html</code>.
+    Grava uma tela falsa que pisca junto com um bipe, salva o clipe e deixa o MP4 em
+    <code>window.__clips</code> (base64) para conferir no ffprobe/ffmpeg.</p>
+  <canvas id="screen" width="640" height="360"></canvas>
+  <pre id="log"></pre>
+  <script type="module" src="./replay-e2e.js"></script>
+</body>
+</html>

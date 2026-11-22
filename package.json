@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node --import ./tests/helpers/vite-url-loader.mjs --test \"tests/*.test.js\" \"tests/*.test.cjs\""
   },
   "devDependencies": {
     "@vitejs/plugin-basic-ssl": "^2.3.0",

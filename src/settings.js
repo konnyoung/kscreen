@@ -883,6 +883,98 @@ export function initSettings(api) {
         s.isLive()
           ? switchItem('Compartilhar áudio da transmissão', s.hasAudio() ? 'Liga ou silencia o som do que você está transmitindo.' : 'Esta transmissão não tem áudio.', s.hasAudio() && s.audioEnabled(), (on) => s.setAudioEnabled(on), { disabled: !s.hasAudio() })
           : note('O áudio da transmissão pode ser ligado ou silenciado pelo menu da transmissão enquanto você estiver ao vivo.')));
+    // Instant Replay exists only in the desktop app (api.replay.available() is false elsewhere).
+    if (api.replay?.available()) box.append(replayBlock(api.replay, s.isLive()));
+  }
+
+  // "Recording on the GPU": live status and, when it records on the processor, what to install
+  // for this distro and GPU (built by the app from each distro's docs: platform/linux.js).
+  function gpuBlock(r) {
+    const hw = r.hwEncoder();
+    if (hw === null) return null;
+    const guide = r.gpuGuide();
+    const rows = [h('div', { class: 'set-row', 'data-search': 'placa vídeo gpu encoder vaapi driver processador' },
+      h('span', { class: 'set-row-text' },
+        h('span', { class: 'set-row-label' }, 'Gravar pela placa de vídeo'),
+        h('span', { class: `set-row-hint ${hw ? '' : 'set-warn-text'}` }, hw
+          ? 'Disponível: os clipes são gravados pela placa de vídeo.'
+          : 'Não disponível: os clipes são gravados pelo processador, em até 720p a 30 FPS.')))];
+    if (hw) return h('div', {}, rows);
+    if (!guide) {
+      rows.push(note('Atualize o driver da sua placa de vídeo para gravar pela placa.'));
+      return h('div', {}, rows);
+    }
+    const detected = [guide.distro, guide.vendor && tr('placa {vendor}').replace('{vendor}', guide.vendor)].filter(Boolean).join(' · ');
+    rows.push(note(tr('Detectado: {what}').replace('{what}', detected)));
+    if (guide.note) rows.push(note(guide.note, guide.unsupported ? '' : 'warn'));
+    if (guide.steps?.length) {
+      rows.push(h('ol', { class: 'set-steps' }, guide.steps.map(step => h('li', { class: step.done ? 'done' : '' },
+        h('span', {}, step.text),
+        step.done ? h('span', { class: 'set-step-done' }, 'Já instalado') : null,
+        step.cmd ? h('div', { class: 'set-cmd' },
+          h('code', { class: 'set-code', 'data-no-tr': '' }, step.cmd),
+          button('Copiar', () => navigator.clipboard?.writeText(step.cmd).catch(() => {}))) : null))));
+    }
+    if (guide.sources?.length) {
+      rows.push(h('p', { class: 'set-note set-sources' }, tr('Fonte:'), ' ',
+        guide.sources.map((s, i) => [i ? ' · ' : '', h('a', { href: s.url, target: '_blank', rel: 'noreferrer', 'data-no-tr': '' }, s.name)])));
+    }
+    return h('div', { class: 'set-gpu-guide' }, rows);
+  }
+
+  function replayBlock(r, live) {
+    const cur = r.get();
+    const items = [
+      // The page redraws itself when the replay reports the change (main.js, replayChanged).
+      switchItem('Instant Replay', 'Guarda os últimos segundos da sua transmissão na memória para salvar como clipe. Só funciona enquanto você transmite.', cur.enabled, (on) => r.set({ enabled: on }), { search: 'clipe clip replay gravar salvar' })
+    ];
+    if (cur.enabled) {
+      items.push(
+        field('Duração do clipe', segmented(r.durations().map(n => ({ id: n, label: `${n} s` })), cur.seconds, (seconds) => r.set({ seconds: Number(seconds) }), 'Duração do clipe'),
+          'Quanto tempo para trás o clipe guarda.', 'segundos tempo'),
+        field('Atalho para salvar', select(r.hotkeys().map(k => ({ id: k, label: k })), cur.hotkey, (hotkey) => r.set({ hotkey }), 'Atalho para salvar'),
+          'Funciona mesmo com o jogo em primeiro plano, enquanto o Instant Replay estiver ativo. Nesse tempo a tecla não chega ao jogo.', 'tecla atalho hotkey'),
+        switchItem('Gravar o microfone', 'Sua voz, como a sala ouve (com a supressão de ruído).', cur.mic !== false, (on) => r.set({ mic: on }), { search: 'voz microfone mic' }),
+        switchItem('Gravar o microfone mesmo mutado', 'Sua voz vai para o clipe mesmo com o microfone mutado na sala. Só fica no seu computador: a sala continua sem ouvir nada. O microfone fica aberto enquanto você transmite.', cur.mic !== false && !!cur.micAlways, (on) => r.set({ micAlways: on }), { disabled: cur.mic === false, search: 'mudo mutado sempre voz' }),
+        switchItem('Gravar as vozes da sala', 'As vozes de quem está na sala, como você ouve (com os volumes que você ajustou). Fica só no seu computador.', !!cur.voices, (on) => r.set({ voices: on }), { search: 'vozes sala chamada amigos call' }));
+      if (r.pcAudioAvailable()) {
+        items.push(switchItem('Gravar todo o som do PC', 'O clipe pega todo o som do PC, inclusive os apps que você excluiu da transmissão, mesmo se ela estiver sem áudio ou silenciada. As vozes da sala só entram pela opção acima.', !!cur.pcAudio, (on) => r.set({ pcAudio: on }), { search: 'som pc sistema áudio sempre' }));
+      }
+      items.push(field('Faixas de áudio', segmented([
+        { id: 'mixed', label: 'Tudo junto', detail: 'uma faixa' },
+        { id: 'separate', label: 'Separadas', detail: 'uma por fonte' }
+      ], cur.micMode === 'separate' ? 'separate' : 'mixed', (micMode) => r.set({ micMode }), 'Faixas de áudio'),
+      'Tudo junto: transmissão, microfone e vozes numa faixa só, que toca em qualquer player ou chat. Separadas: cada som numa faixa, para ajustar num editor de vídeo.', 'faixa trilha voz separada junto mistura canal'));
+      const sc = r.shortcut();
+      if (sc.bindLine) {
+        // Hyprland: the key is bound in hyprland.conf, to the portal shortcut.
+        items.push(h('div', { class: 'set-row', 'data-search': 'hyprland atalho tecla bind' },
+          h('span', { class: 'set-row-text' },
+            h('span', { class: 'set-row-label' }, 'Atalho no Hyprland'),
+            h('span', { class: 'set-row-hint' }, tr('No Hyprland a tecla fica no {file}. Adicione esta linha (a tecla é a escolhida acima):').replace('{file}', sc.configFile || 'hyprland.conf')),
+            h('code', { class: 'set-code', 'data-no-tr': '' }, sc.bindLine)),
+          button('Copiar', () => navigator.clipboard?.writeText(sc.bindLine).catch(() => {}))));
+      } else if (sc.via === 'portal') {
+        const key = r.hotkeyTrigger();
+        items.push(note(key
+          ? tr('Atalho definido pelo sistema: {key}. Para trocar, use as configurações de atalhos do sistema (kScreen → Salvar clipe).').replace('{key}', key)
+          : tr('No Wayland o sistema define a tecla (pode pedir confirmação quando o replay liga). Se não funcionar, crie um atalho do sistema com o comando: {cmd}').replace('{cmd}', r.saveClipCommand())));
+      } else if (r.wayland()) {
+        items.push(note(tr('No Wayland, quem libera atalhos globais é o sistema (pode pedir permissão). Se não funcionar, crie um atalho em Configurações do sistema → Teclado com o comando: {cmd}').replace('{cmd}', r.saveClipCommand())));
+      } else if (live && r.active() && !r.hotkeyRegistered()) {
+        items.push(note(tr('O atalho {key} está em uso por outro programa. Escolha outro.').replace('{key}', cur.hotkey), 'warn'));
+      }
+      const gpu = gpuBlock(r);
+      if (gpu) items.push(gpu);
+      if (r.aacMissing()) items.push(note('Sem o ffmpeg instalado, o áudio dos clipes sai em Opus, que alguns celulares e editores não tocam. Instale o ffmpeg para ele sair em AAC.', 'warn'));
+      if (r.error()) items.push(note(r.error(), 'warn'));
+      if (live && r.active()) items.push(note('Instant Replay ativo nesta transmissão.'));
+    }
+    items.push(h('div', { class: 'set-row', 'data-search': 'pasta clipes vídeos abrir' },
+      h('span', { class: 'set-row-text' }, h('span', { class: 'set-row-label' }, 'Clipes salvos'),
+        h('span', { class: 'set-row-hint' }, 'Ficam na pasta Vídeos, em kScreen.')),
+      button('Abrir pasta', () => r.openFolder())));
+    return block('Instant Replay', ...items);
   }
 
   // ---- Sons ------------------------------------------------------------------------------------
@@ -1008,7 +1100,11 @@ export function initSettings(api) {
 
   // Redraws a section if it is the one on screen.
   function refresh(section) {
-    if (isOpen() && current === section && !searchInput.value) show(section);
+    if (!isOpen() || current !== section || searchInput.value) return;
+    // Same page drawn again (state changed): stay where the user was reading.
+    const top = scroller.scrollTop;
+    show(section);
+    scroller.scrollTop = top;
   }
 
   return { open, close, isOpen, refresh };

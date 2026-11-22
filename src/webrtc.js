@@ -1854,6 +1854,8 @@ export class P2PEngine {
 
   // Returns the new muted state. The mic is only captured on first unmute.
   async toggleMute() {
+    // Once the user unmutes, the mic is theirs: Instant Replay no longer closes it.
+    this.micOpenedMuted = false;
     if (!this.micStream) {
       await this.openMic();
       this.isMicMuted = false;
@@ -1867,6 +1869,29 @@ export class P2PEngine {
     for (const track of this.micStream.getAudioTracks()) track.enabled = !this.isMicMuted;
     this.broadcastVoiceState();
     return this.isMicMuted;
+  }
+
+  // Opens the mic WITHOUT unmuting (Instant Replay's "record the mic even muted"). Peers get the
+  // track already off (silence, as before), so a later unmute is the usual on/off.
+  async openMicMuted() {
+    if (this.micStream) return this.micStream;
+    await this.openMic();
+    for (const track of this.micStream.getAudioTracks()) track.enabled = false;
+    this.isMicMuted = true;
+    this.micOpenedMuted = true;
+    for (const peer of this.peers.values()) this.attachLocalTracks(peer);
+    this.startSpeakingDetector();
+    return this.micStream;
+  }
+
+  // Closes a mic that openMicMuted opened, if the user never unmuted it (Instant Replay stopped
+  // or its "even muted" option was turned off). Returns whether it was closed.
+  releaseMutedMic() {
+    if (!this.micOpenedMuted || !this.micStream || !this.isMicMuted) return false;
+    this.micOpenedMuted = false;
+    this.stopMic();
+    for (const peer of this.peers.values()) this.attachLocalTracks(peer);
+    return true;
   }
 
   // The mic goes through a gain node (input volume). Peers get the gain's output track, which
@@ -2189,6 +2214,7 @@ export class P2PEngine {
     this.mic = null;
     this.micStream = null;
     this.isMicMuted = true;
+    this.micOpenedMuted = false;
     this.stopSpeakingDetector();
   }
 
