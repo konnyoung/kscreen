@@ -921,6 +921,14 @@ export class KScreenEngine extends P2PEngine {
         await local.publishTrack(track, this.sfuPublishOptions(source, track));
       }
     }
+    // Our mute is only `track.enabled = false`, but LiveKit keeps its own mute state and, when it
+    // wraps the track (publish, republish after a reconnect), sets `enabled = !isMuted`. Left at
+    // its default (not muted) that turned a muted mic back on for everyone while the button still
+    // showed it muted. So LiveKit's state always follows ours.
+    const micTrack = local.getTrackPublication(S.Microphone)?.track;
+    if (micTrack && this.sfu?.room === room && micTrack.isMuted !== this.isMicMuted) {
+      await (this.isMicMuted ? micTrack.mute() : micTrack.unmute());
+    }
   }
 
   sfuPublishOptions(source, track) {

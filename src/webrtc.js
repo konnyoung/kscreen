@@ -2168,6 +2168,13 @@ export class P2PEngine {
     const timer = setInterval(() => {
       if (this.mic !== mic) return;
       if (mic.ctx.state === 'suspended') mic.ctx.resume().catch(() => {});
+      // Muted means silent, whatever else touched the track (LiveKit re-enables tracks it wraps).
+      for (const track of this.micStream?.getAudioTracks() || []) {
+        if (track.enabled === this.isMicMuted) {
+          track.enabled = !this.isMicMuted;
+          if (this.isMicMuted) this.log('Microfone religado por fora enquanto mutado; silenciado de novo.', 'warn');
+        }
+      }
       let voice;
       if (mic.noise) {
         voice = this.voiceActivity;
